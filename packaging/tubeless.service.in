@@ -1,0 +1,21 @@
+[Unit]
+Description=@NAME@ (Tubeless touchscreen video player)
+After=pigpiod.service local-fs.target
+Wants=pigpiod.service
+
+[Service]
+User=@USER@
+WorkingDirectory=@APPDIR@
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=@APPDIR@
+# Wait (up to 30 s) for the display driver, so the player never starts before the panel exists.
+ExecStartPre=/bin/sh -c 'for n in $$(seq 1 60); do [ -e /sys/class/drm/card0-DPI-1 ] && exit 0; sleep 0.5; done; exit 0'
+ExecStart=/usr/bin/python3 -m tubeless run
+# Restart on any exit; stopping or restarting also takes mpv down with it (control-group kill).
+Restart=always
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

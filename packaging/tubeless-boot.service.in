@@ -1,0 +1,18 @@
+[Unit]
+Description=@NAME@ boot screen (Matrix-style status until the first video frame)
+After=pigpiod.service
+Wants=pigpiod.service
+
+[Service]
+User=@USER@
+WorkingDirectory=@APPDIR@
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=@APPDIR@
+ExecStart=/usr/bin/python3 -m tubeless boot
+# Never compete with the player for CPU while it is starting; it exits by itself once the player has a picture.
+Nice=10
+Restart=no
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

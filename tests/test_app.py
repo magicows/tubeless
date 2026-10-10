@@ -55,9 +55,9 @@ def test_swipe_up_and_down_change_channel_and_remember_it(rig):
 
 def test_long_press_opens_the_menu_and_it_hides_itself(rig):
     rig.open_menu()
-    assert rig.player.overlay is not None
-    assert wait_for(lambda: not rig.app.menu_open, timeout=3)             # auto-hide
-    assert rig.player.overlay is None
+    assert wait_for(lambda: rig.player.overlay is not None)                # drawing takes a moment on a slow machine
+    assert wait_for(lambda: not rig.app.menu_open, timeout=8)             # auto-hide
+    assert wait_for(lambda: rig.player.overlay is None)
 
 
 def test_menu_rows_by_touch(rig):
@@ -119,6 +119,7 @@ def test_settings_survive_a_restart(tmp_path):
     r.tap_row(1)                                                           # shuffle off
     assert wait_for(lambda: r.state["shuffle"] is False)
     r.tap_row(4)                                                           # auto-dim
+    assert wait_for(lambda: r.state["auto_dim_min"] == 2)
     r.stop()
     again = Rig(tmp_path, start=False)
     assert again.app.brightness == 25 and again.app.shuffle is False and again.app.auto_dim_min == 2
@@ -270,10 +271,9 @@ def test_shutdown_needs_a_second_tap_to_confirm(rig):
     rig.tap_row(4)                                                         # Settings
     rig.swipe(320, 380, 320, 200, duration=0.15)                           # scroll down to reach "Shut down"
     assert wait_for(lambda: rig.app.menu.top > 0)
-    last = rig.app.menu.top + 5
     rig.tap_row(5)
-    assert not rig.power.shutdown_requested                                # first tap only asks
-    assert rig.app.confirm_shutdown_until > time.time()
+    assert wait_for(lambda: rig.app.confirm_shutdown_until > time.time())  # first tap only asks ...
+    assert not rig.power.shutdown_requested
     rig.tap_row(5)
     assert wait_for(lambda: rig.power.shutdown_requested)
     assert rig.state["mode"] == "shutdown"

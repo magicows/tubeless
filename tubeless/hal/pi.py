@@ -1,9 +1,11 @@
 """The real Pi: evdev touch, pigpio backlight, /dev/fb0, systemctl power-off."""
 from __future__ import annotations
 
+import fcntl
 import logging
 import mmap
 import select
+import struct
 import subprocess
 import time
 from typing import List, Optional
@@ -52,7 +54,34 @@ class EvdevTouch:
         self.x_max = self.device.absinfo(ecodes.ABS_MT_POSITION_X).max or 1
         self.y_max = self.device.absinfo(ecodes.ABS_MT_POSITION_Y).max or 1
         self.slot, self.tracking, self.pos_x, self.pos_y = 0, {}, {}, {}
+        self._sync_slots()
         log.info("listening on %s (%s) axes %sx%s", path, self.device.name, self.x_max, self.y_max)
+
+    def _mt_values(self, code: int, nslots: int) -> List[int]:
+        """EVIOCGMTSLOTS: the kernel's current value of one multi-touch axis for every slot."""
+        size = 4 * (nslots + 1)
+        request = (2 << 30) | (size << 16) | (ord("E") << 8) | 0x0A          # _IOC(_IOC_READ, 'E', 0x0a, size)
+        buf = bytearray(size)
+        struct.pack_into("I", buf, 0, code)
+        fcntl.ioctl(self.device.fd, request, buf, True)
+        return list(struct.unpack_from("%di" % nslots, buf, 4))
+
+    def _sync_slots(self) -> None:
+        """
+        The kernel only reports a coordinate when it *changes*, so a reader that starts late would never learn the
+        position of a touch that lands on the same X (or Y) as the previous one. Ask for what each slot holds now.
+        """
+        from evdev import ecodes
+        try:
+            nslots = self.device.absinfo(ecodes.ABS_MT_SLOT).max + 1
+            xs = self._mt_values(ecodes.ABS_MT_POSITION_X, nslots)
+            ys = self._mt_values(ecodes.ABS_MT_POSITION_Y, nslots)
+            ids = self._mt_values(ecodes.ABS_MT_TRACKING_ID, nslots)
+        except Exception as e:
+            log.info("could not read the touch slots' current state (%s)", e)
+            return
+        for slot in range(nslots):
+            self.pos_x[slot], self.pos_y[slot], self.tracking[slot] = xs[slot], ys[slot], ids[slot]
 
     def read(self, timeout: Optional[float]) -> List[TouchSample]:
         from evdev import ecodes
