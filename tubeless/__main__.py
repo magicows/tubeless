@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import json
 import logging
 import logging.handlers
 import os
@@ -18,7 +20,7 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .config import Config, expand
+from .config import MAX_NAME_LENGTH, Config, expand, user_config_path
 from .hardware import load_hardware
 
 
@@ -129,6 +131,61 @@ def cmd_sim(args) -> int:
 
 
 # ─────────────────────────────────────────────
+def _parse_value(text: str):
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+def cmd_config(args) -> int:
+    """Look at or change config.json, e.g.  python -m tubeless config set name "Living Room"."""
+    path = expand(args.config) if args.config else user_config_path()
+    stored = {}
+    if path.is_file():
+        with open(path) as f:
+            stored = json.load(f)
+    fields = {f.name for f in dataclasses.fields(Config)}
+
+    if args.action == "show":
+        cfg = Config.from_dict(stored)
+        print(json.dumps({f: getattr(cfg, f) for f in sorted(fields)}, indent=2))
+        print(f"\n(settings stored in {path}: {', '.join(sorted(stored)) or 'none, all defaults'})")
+        return 0
+    if args.key not in fields:
+        print(f"unknown setting {args.key!r}. Known settings: {', '.join(sorted(fields))}", file=sys.stderr)
+        return 2
+    if args.action == "get":
+        print(json.dumps(stored.get(args.key, getattr(Config(), args.key))))
+        return 0
+
+    value = _parse_value(args.value)
+    if args.key == "name":
+        value = str(value).strip()
+        if not value:
+            print("the name can't be empty", file=sys.stderr)
+            return 2
+        if len(value) > MAX_NAME_LENGTH:
+            print(f"the name is too long ({len(value)} characters; the menu title fits {MAX_NAME_LENGTH})", file=sys.stderr)
+            return 2
+    stored[args.key] = value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(stored, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    print(f"{args.key} = {json.dumps(value)}   (saved in {path})")
+    if args.restart:
+        import subprocess
+        subprocess.run(["sudo", "systemctl", "restart", "tubeless"])
+        print("restarted tubeless")
+    else:
+        print("takes effect when Tubeless restarts:  sudo systemctl restart tubeless")
+    return 0
+
+
+# ─────────────────────────────────────────────
 def cmd_boot(args) -> int:
     from . import bootscreen
     cfg = Config.load(args.config)
@@ -168,6 +225,14 @@ def main(argv=None) -> int:
     p.add_argument("--png", help="render a preview frame to this file instead of the screen")
     p.add_argument("--at", type=float, default=9.0)
     p.set_defaults(func=cmd_boot)
+
+    p = sub.add_parser("config", help="show or change settings, e.g. the TV's name")
+    p.add_argument("action", choices=["show", "get", "set"])
+    p.add_argument("key", nargs="?")
+    p.add_argument("value", nargs="?")
+    p.add_argument("--config", help="config file (default ~/.config/tubeless/config.json)")
+    p.add_argument("--restart", action="store_true", help="after `set`, restart the TV service")
+    p.set_defaults(func=cmd_config)
 
     p = sub.add_parser("version")
     p.set_defaults(func=lambda a: print(__version__) or 0)

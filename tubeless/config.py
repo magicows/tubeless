@@ -18,6 +18,13 @@ def expand(path) -> Path:
     return Path(os.path.expanduser(str(path)))
 
 
+MAX_NAME_LENGTH = 16          # longer names don't fit next to the channel name in the menu title
+
+
+def user_config_path() -> Path:
+    return expand(os.environ.get("TUBELESS_CONFIG") or "~/.config/tubeless/config.json")
+
+
 @dataclass
 class Config:
     # What this TV is called (shown in the menu and on the boot screen).

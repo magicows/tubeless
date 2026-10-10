@@ -40,6 +40,15 @@ def _s(v: float) -> int:
     return int(round(v * SS))
 
 
+def fit_text(draw, text: str, font, max_width: float) -> str:
+    """`text`, shortened with an ellipsis if it would be wider than `max_width` pixels."""
+    if draw.textlength(text, font=font) <= max_width:
+        return text
+    while len(text) > 1 and draw.textlength(text + "\u2026", font=font) > max_width:
+        text = text[:-1]
+    return text.rstrip() + "\u2026"
+
+
 def _rrect(d, box, radius, fill, outline=None, width=0):
     """Rounded rectangle that also works on old Pillow (8.1 has no rounded_rectangle)."""
     def shape(b, rad, color):
@@ -174,9 +183,13 @@ def render_menu_landscape(items: Sequence, selected: int, hw: Hardware, title: s
     _rrect(d, (_s(PANEL_RECT[0]), _s(PANEL_RECT[1]), _s(PANEL_RECT[2]), _s(PANEL_RECT[3])),
            _s(20), PANEL_BG, outline=ACCENT, width=_s(2))
 
-    d.text((_s(46), _s(24)), title, font=fonts.load(fonts.SANS_BOLD, 28 * SS), fill=ACCENT)
+    title_font, sub_font = fonts.load(fonts.SANS_BOLD, 28 * SS), fonts.load(fonts.SANS, 20 * SS)
+    room = _s(W - 46) - _s(46)                                   # between the two text margins
     if subtitle:
-        d.text((_s(W - 46), _s(30)), subtitle, font=fonts.load(fonts.SANS, 20 * SS), fill=DIM, anchor="ra")
+        subtitle = fit_text(d, subtitle, sub_font, room * 0.45)
+        room -= d.textlength(subtitle, font=sub_font) + _s(20)
+        d.text((_s(W - 46), _s(30)), subtitle, font=sub_font, fill=DIM, anchor="ra")
+    d.text((_s(46), _s(24)), fit_text(d, title, title_font, room), font=title_font, fill=ACCENT)
     d.line([(_s(40), _s(68)), (_s(W - 40), _s(68))], fill=(60, 68, 92, 255), width=_s(1))
 
     total = len(items)

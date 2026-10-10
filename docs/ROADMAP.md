@@ -36,7 +36,7 @@
 1. **Installer** for stock Raspberry Pi OS Lite (Bullseye): packages, Waveshare overlays (downloaded from Waveshare at
    install time, not redistributed), `config.txt`/`cmdline.txt`/console changes, units, config. Idempotent and re-runnable.
 2. **Library index**: scan new files, record durations (mediainfo), keep it fresh when files appear.
-3. **Web companion** (small, streaming, low-memory): TV name, channel management, settings, status/logs.
+3. **Web companion** (small, streaming, low-memory): TV name (today: `python -m tubeless config set name ...`), channel management, settings, status/logs.
 4. **Transfer mode**: menu toggle, fixed info screen with URL and QR code, resumable chunked uploads written to a `.part`
    file and renamed when done, disk-space check, file advice.
 5. **Setup mode**: first-boot hotspot with a QR code, captive portal, Wi-Fi country and the phone's clock/timezone.
@@ -57,6 +57,6 @@
 
 ## Open questions
 
-* Licence (needed before the first public release).
+* ~~Licence~~ decided: MIT, with the original author credited.
 * Which web stack for the companion (must stay small on a 512 MB Pi).
 * Whether the Waveshare overlays can be redistributed in an image or must be fetched at install time (assume fetch).

@@ -27,6 +27,7 @@ from . import fonts
 from .config import Config, expand
 from .hardware import Hardware
 from .library import Library
+from .render import fit_text
 
 log = logging.getLogger(__name__)
 
@@ -128,8 +129,8 @@ def draw_foreground(hw: Hardware, name: str, greeting: str, t: float, lines: Lis
         d.line([(cx, cy), (cx + 22 * sx, cy)], fill=GREEN, width=2)           # bright corner brackets
         d.line([(cx, cy), (cx, cy + 22 * sy)], fill=GREEN, width=2)
 
-    title = name.upper()
     hf = fonts.load(fonts.MONO_BOLD, 36)
+    title = fit_text(d, name.upper(), hf, (x1 - x0) - 190)       # leave room for "// BOOT SEQUENCE"
     for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
         d.text((x0 + dx, py0 + 18 + dy), title, font=hf, fill=GREEN_DIM)       # a little glow
     d.text((x0, py0 + 18), title, font=hf, fill=GREEN)

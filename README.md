@@ -63,19 +63,42 @@ packaging/         systemd unit templates
 docs/              architecture, roadmap, trial instructions
 ```
 
+## Make it yours
+
+Every TV has its own name, shown in the menu title and on the boot screen (up to 16 characters):
+
+```
+python -m tubeless config set name "Living Room" --restart
+python -m tubeless config show
+```
+
+The boot-screen greeting, folders and static clips are settings too (`config show` lists them). A web page for this,
+for people who'd rather not use SSH, is on the [roadmap](docs/ROADMAP.md).
+
 ## Running on a TV
 
 For now: `tools/deploy.sh <ssh-host>` copies the code to a Pi that already has the display working,
 installs the services and starts it. A proper installer (and later a flashable image) is on the
 [roadmap](docs/ROADMAP.md).
 
-## Credits and licence
+## Credits
 
-The shell and wiring follow the build guide at <https://withrow.io/simpsons-tv-build-guide-waveshare>
-(whose original player code is at <https://github.com/buba447/simpsonstv>). The display overlays come from
-Waveshare's wiki for the 2.8" DPI LCD. Fonts are bundled under their own licences
+Tubeless exists because of the original **Simpsons TV** project by **buba447**:
+
+* the build guide, by the author at **<https://withrow.io/simpsons-tv-build-guide>** (and its Waveshare-screen
+  variant, <https://withrow.io/simpsons-tv-build-guide-waveshare>), which is where the shell, the wiring and the whole idea
+  come from, and
+* the original player scripts, at **<https://github.com/buba447/simpsonstv>** (GitHub user *buba447*).
+
+Tubeless is a separate, from-scratch implementation for a different stack (Pi Zero 2 W, mpv, a touchscreen). It contains
+no code from that repository, which carries no licence of its own. If you build the TV, please go and read the guide.
+
+Also: **Waveshare**, whose wiki supplies the display and touch overlays this build needs (the installer fetches them
+from Waveshare; they are not redistributed here), and the **DejaVu** and **Droid** font authors
 ([`tubeless/assets/fonts/LICENSES.txt`](tubeless/assets/fonts/LICENSES.txt)).
 
 **No videos are included, and none ever will be.** Bring your own.
 
-Licence: *to be decided before the first public release.*
+## Licence
+
+[MIT](LICENSE). The shell design, the original guide and the original scripts belong to their own authors.

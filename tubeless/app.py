@@ -727,6 +727,7 @@ class App:
         now = time.time()
         if rel != self._cur_rel:
             self._cur_rel, self._last_save = rel, now
+            log.info("now playing [%s] %s (cycle %d)", self.plan.channel.name, rel, self.plan.cycle)
             self.playlists.set_progress(self.plan.channel, rel, t)
         elif now - self._last_save >= self.progress_save_every:
             self._last_save = now
