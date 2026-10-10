@@ -1,0 +1,13 @@
+Fonts bundled with Tubeless
+===========================
+
+DejaVuSans.ttf, DejaVuSans-Bold.ttf, DejaVuSansMono.ttf, DejaVuSansMono-Bold.ttf
+  DejaVu fonts, https://dejavu-fonts.github.io/
+  Based on Bitstream Vera (c) 2003 Bitstream, Inc. DejaVu changes are in the public domain.
+  The Bitstream Vera licence allows free use, copying and redistribution of the fonts.
+  Full text: https://dejavu-fonts.github.io/License.html
+
+KanaSubset.ttf
+  A subset (half-width katakana, U+FF66-FF9D) of Droid Sans Fallback,
+  (c) The Android Open Source Project, licensed under the Apache License 2.0
+  https://www.apache.org/licenses/LICENSE-2.0

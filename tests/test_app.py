@@ -1,0 +1,327 @@
+import json
+import time
+
+import pytest
+
+from rig import HW, Rig, wait_for
+from tubeless.hardware import apply_affine, invert_affine
+
+
+@pytest.fixture
+def rig(tmp_path):
+    r = Rig(tmp_path)
+    yield r
+    r.stop()
+
+
+def test_starts_playing_the_first_channel_with_a_static_up_front(rig):
+    s = rig.state
+    assert s["channel"] == "1.cartoons" and s["mode"] == "play"
+    assert s["playlist_pos"] in (0, 1) and s["playlist_count"] == 10      # 5 videos, each behind a static
+    assert rig.player.playlist[0] == "/static_short.mp4"
+    assert rig.backlight.percent == 100
+
+
+def test_tap_pauses_and_resumes(rig):
+    rig.tap()
+    assert wait_for(lambda: rig.state["paused"] is True)
+    rig.tap()
+    assert wait_for(lambda: rig.state["paused"] is False)
+
+
+def test_swipe_left_goes_to_the_next_video_through_a_static(rig):
+    rig.player.command("set_property", "playlist-pos", 1)
+    rig.swipe_left()
+    assert wait_for(lambda: rig.state["playlist_pos"] == 2)
+    assert rig.player.playlist[2] == "/static_short.mp4"
+
+
+def test_swipe_right_from_the_first_video_wraps_to_the_last_one(rig):
+    rig.player.command("set_property", "playlist-pos", 1)
+    rig.swipe_right()
+    assert wait_for(lambda: rig.state["playlist_pos"] == 8)               # the static in front of the last video
+
+
+def test_swipe_up_and_down_change_channel_and_remember_it(rig):
+    rig.swipe_up()
+    assert wait_for(lambda: rig.state["channel"] == "2.nights")
+    assert wait_for(lambda: any(c[0] == "loadfile" and str(c[1]).endswith("playlist.m3u") for c in rig.player.commands))
+    assert ("loadfile", "/static_long.mp4", "replace") in rig.player.commands
+    assert rig.app.settings.get("channel") == "2.nights"
+    assert wait_for(lambda: len(rig.player.playlist) == 6)                 # the nights playlist: 3 videos
+    rig.swipe_down()
+    assert wait_for(lambda: rig.state["channel"] == "1.cartoons")
+
+
+def test_long_press_opens_the_menu_and_it_hides_itself(rig):
+    rig.open_menu()
+    assert rig.player.overlay is not None
+    assert wait_for(lambda: not rig.app.menu_open, timeout=3)             # auto-hide
+    assert rig.player.overlay is None
+
+
+def test_menu_rows_by_touch(rig):
+    rig.open_menu()
+    rig.tap_row(3)                                                         # Brightness
+    assert wait_for(lambda: rig.state["brightness"] == 25)
+    assert rig.backlight.percent == 25
+    assert json.load(open(rig.cfg.data / "settings.json"))["brightness"] == 25
+    rig.tap_row(3)
+    assert wait_for(lambda: rig.state["brightness"] == 50)
+    rig.tap_row(4)                                                         # Settings >
+    assert wait_for(lambda: rig.state["menu_page"] == "settings")
+    rig.tap_row(0)                                                         # < Back
+    assert wait_for(lambda: rig.state["menu_page"] == "main")
+    rig.tap(5, 5)                                                          # outside the panel
+    assert wait_for(lambda: not rig.app.menu_open)
+
+
+def test_menu_play_pause_and_next_rows(rig):
+    rig.open_menu()
+    rig.tap_row(0)
+    assert wait_for(lambda: rig.state["paused"])
+    rig.tap_row(0)
+    assert wait_for(lambda: not rig.state["paused"])
+    rig.player.command("set_property", "playlist-pos", 1)
+    rig.tap_row(1)                                                         # Next video closes the menu and skips
+    assert wait_for(lambda: not rig.app.menu_open and rig.state["playlist_pos"] == 2)
+
+
+def test_menu_channel_row_switches_channel(rig):
+    rig.open_menu()
+    rig.swipe(320, 380, 320, 260, duration=0.15)                           # scroll so the channel rows are in view
+    assert wait_for(lambda: rig.app.menu.top == 1)                         # 7 rows, 6 visible: scrolled to the bottom
+    rig.tap_row(5)                                                         # the second channel (row 6 of the list)
+    assert wait_for(lambda: rig.state["channel"] == "2.nights" and not rig.app.menu_open)
+
+
+def test_swiping_scrolls_the_menu_and_taps_never_do(tmp_path):
+    chans = {f"{i}.chan{i}": ["a.mp4"] for i in range(1, 12)}
+    r = Rig(tmp_path, channels=chans)
+    try:
+        r.open_menu()
+        assert r.app.menu.top == 0
+        r.swipe(320, 380, 320, 200, duration=0.15)                         # swipe up: scroll down
+        assert wait_for(lambda: r.app.menu.top > 0)
+        top = r.app.menu.top
+        r.tap_row(0)                                                       # a tap activates a row (Brightness) but must not scroll
+        assert wait_for(lambda: r.state["brightness"] == 25)
+        assert r.app.menu.top == top and r.app.menu_open
+    finally:
+        r.stop()
+
+
+def test_settings_survive_a_restart(tmp_path):
+    r = Rig(tmp_path)
+    r.open_menu()
+    r.tap_row(3)                                                           # brightness 100 -> 25
+    r.tap_row(4)                                                           # settings
+    r.tap_row(1)                                                           # shuffle off
+    assert wait_for(lambda: r.state["shuffle"] is False)
+    r.tap_row(4)                                                           # auto-dim
+    r.stop()
+    again = Rig(tmp_path, start=False)
+    assert again.app.brightness == 25 and again.app.shuffle is False and again.app.auto_dim_min == 2
+
+
+def test_resumes_the_episode_and_position_after_a_restart(tmp_path):
+    r = Rig(tmp_path)
+    ch = r.app.current_channel()
+    r.app.shuffle = False
+    r.app.settings.set(shuffle=False)
+    r.app.reload_channel()
+    r.player.command("set_property", "playlist-pos", 5)                    # third video
+    r.player.command("seek", 120.0, "absolute")
+    r.app.save_progress_now()
+    r.stop()
+    prog = r.app.playlists.progress(ch)
+    assert prog["current"] == "c2.mp4" and prog["pos"] == 120.0
+
+    again = Rig(tmp_path, start=False)
+    again.app.startup()
+    again.app.start_threads()
+    try:
+        assert again.player.playlist[1].endswith("c2.mp4")                 # rotated to start at the episode you were on
+        assert wait_for(lambda: ("seek", 117.0, "absolute") in again.player.commands, timeout=5)   # rewound 3 s
+    finally:
+        again.stop()
+
+
+def test_progress_is_recorded_as_episodes_change(tmp_path):
+    r = Rig(tmp_path, settings={"shuffle": False})
+    try:
+        r.player.command("set_property", "playlist-pos", 3)
+        assert wait_for(lambda: r.app.playlists.progress(r.app.current_channel()).get("current") == "c1.mp4", timeout=4)
+        r.player.command("set_property", "playlist-pos", 5)
+        assert wait_for(lambda: r.app.playlists.progress(r.app.current_channel()).get("current") == "c2.mp4", timeout=4)
+    finally:
+        r.stop()
+
+
+def test_a_finished_playlist_starts_a_new_cycle(tmp_path):
+    r = Rig(tmp_path, channels={"1.short": ["a.mp4", "b.mp4"]}, duration=lambda p: 0.3)
+    try:
+        cycle0 = r.app.plan.cycle
+        assert wait_for(lambda: r.app.plan.cycle > cycle0, timeout=8)       # played through, reshuffled, restarted
+        assert r.player.alive()
+    finally:
+        r.stop()
+
+
+def test_skipping_forward_past_the_end_starts_a_new_cycle(rig):
+    rig.player.command("set_property", "playlist-pos", 9)
+    cycle0 = rig.app.plan.cycle
+    rig.swipe_left()
+    assert wait_for(lambda: rig.app.plan.cycle == cycle0 + 1)
+
+
+# --- calibration --------------------------------------------------------------------
+def test_first_run_starts_with_the_calibration_wizard(tmp_path):
+    r = Rig(tmp_path, fresh=True)
+    try:
+        assert r.state["mode"] == "calibrate"
+        assert r.player.overlay is not None
+    finally:
+        r.stop()
+
+
+def calibrate(r, panel_affine_view_to_raw_taps):
+    from tubeless import render
+    for vx, vy in render.calibration_targets(HW):
+        r.tap(*panel_affine_view_to_raw_taps(vx, vy), settle=0.2)
+
+
+def test_calibration_learns_a_different_touch_panel(tmp_path):
+    # A panel whose axes disagree with the default map: rotated the other way, slightly scaled.
+    weird = ((0.0, 650.0, -5.0), (-470.0, 0.0, 475.0))
+    r = Rig(tmp_path, settings={}, panel_affine=weird)
+    try:
+        r.app.begin_calibration()
+        assert wait_for(lambda: r.state["mode"] == "calibrate")
+        calibrate(r, lambda vx, vy: (vx, vy))                    # the rig converts the *view* point into this panel's raw
+        assert wait_for(lambda: r.app.settings.get("touch_calibrated") is True, timeout=3)
+        for vx, vy in [(100, 100), (500, 300), (320, 240)]:
+            rx, ry = apply_affine(invert_affine(weird), vx, vy)
+            got = apply_affine(r.app.affine, rx, ry)
+            assert got == pytest.approx((vx, vy), abs=1.5)
+        assert wait_for(lambda: r.state["mode"] == "play", timeout=4)        # wizard finishes by itself
+        assert r.app.settings.get("touch_affine") is not None
+    finally:
+        r.stop()
+
+
+def test_calibration_rejects_inconsistent_taps(tmp_path):
+    r = Rig(tmp_path, settings={})
+    try:
+        r.app.begin_calibration()
+        wait_for(lambda: r.state["mode"] == "calibrate")
+        for vx, vy in [(320, 240), (100, 100), (500, 400), (100, 400), (500, 100)]:     # nowhere near the targets
+            r.tap(vx, vy, settle=0.15)
+        time.sleep(0.4)
+        assert r.app.settings.get("touch_calibrated") is None
+        assert r.state["mode"] == "calibrate" and r.app._calib["step"] == 0           # asks again from the top
+    finally:
+        r.stop()
+
+
+def test_long_press_cancels_calibration(tmp_path):
+    r = Rig(tmp_path, settings={})
+    try:
+        r.app.begin_calibration()
+        wait_for(lambda: r.state["mode"] == "calibrate")
+        r.hold(secs=0.5)
+        assert wait_for(lambda: r.state["mode"] == "play")
+        assert r.app.settings.get("touch_calibrated") is None
+    finally:
+        r.stop()
+
+
+def test_menu_calibrate_row_starts_the_wizard(rig):
+    rig.open_menu()
+    rig.tap_row(4)
+    rig.tap_row(5)                                                         # Calibrate touch
+    assert wait_for(lambda: rig.state["mode"] == "calibrate")
+
+
+# --- sleep / dim / shutdown ---------------------------------------------------------
+def test_sleep_timer_puts_the_tv_to_sleep_and_a_touch_wakes_it(rig):
+    rig.app.sleep_deadline = time.time() + 0.2
+    assert wait_for(lambda: rig.state["mode"] == "standby", timeout=3)
+    assert rig.backlight.percent == 0 and rig.state["paused"]
+    paused_before = rig.player.commands.count(("cycle", "pause"))
+    rig.tap()                                                              # wakes it ...
+    assert wait_for(lambda: rig.state["mode"] == "play" and not rig.state["paused"])
+    assert rig.backlight.percent == 100
+    assert rig.player.commands.count(("cycle", "pause")) == paused_before   # ... and that tap did nothing else
+
+
+def test_auto_dim_dims_then_a_touch_restores_without_acting(rig):
+    rig.app.auto_dim_min = 1
+    rig.app.last_activity = time.time() - 61
+    assert wait_for(lambda: rig.state["dimmed"], timeout=3)
+    assert rig.backlight.percent == 25
+    rig.tap()
+    assert wait_for(lambda: not rig.state["dimmed"] and rig.backlight.percent == 100)
+    assert rig.state["paused"] is False
+
+
+def test_shutdown_needs_a_second_tap_to_confirm(rig):
+    rig.open_menu()
+    rig.tap_row(4)                                                         # Settings
+    rig.swipe(320, 380, 320, 200, duration=0.15)                           # scroll down to reach "Shut down"
+    assert wait_for(lambda: rig.app.menu.top > 0)
+    last = rig.app.menu.top + 5
+    rig.tap_row(5)
+    assert not rig.power.shutdown_requested                                # first tap only asks
+    assert rig.app.confirm_shutdown_until > time.time()
+    rig.tap_row(5)
+    assert wait_for(lambda: rig.power.shutdown_requested)
+    assert rig.state["mode"] == "shutdown"
+
+
+def test_gestures_are_ignored_while_shutting_down(rig):
+    rig.app.do_shutdown()
+    before = list(rig.player.commands)
+    rig.tap()
+    rig.swipe_left()
+    time.sleep(0.3)
+    assert rig.player.commands == before
+
+
+# --- resilience ------------------------------------------------------------------------
+def test_empty_channels_are_skipped_when_swiping(tmp_path):
+    r = Rig(tmp_path, channels={"1.a": ["x.mp4"], "2.empty": ["readme.txt"], "3.c": ["y.mp4"]})
+    try:
+        r.swipe_up()
+        assert wait_for(lambda: r.state["channel"] == "3.c")
+        r.swipe_down()
+        assert wait_for(lambda: r.state["channel"] == "1.a")
+    finally:
+        r.stop()
+
+
+def test_starts_on_the_first_playable_channel_if_the_saved_one_is_empty(tmp_path):
+    r = Rig(tmp_path, channels={"1.a": ["x.txt"], "2.b": ["y.mp4"]}, settings={"channel": "1.a"})
+    try:
+        assert r.state["channel"] == "2.b"
+    finally:
+        r.stop()
+
+
+def test_a_second_finger_cancels_the_gesture(rig):
+    rig.backend.touch.feed(1, *rig._raw(320, 240))
+    rig.backend.touch.feed(2)
+    rig.up()
+    time.sleep(0.3)
+    assert rig.state["paused"] is False and rig.state["last_gesture"] is None
+
+
+def test_imports_an_older_installs_settings(tmp_path):
+    (tmp_path / "old.json").write_text(json.dumps({"brightness": 50, "shuffle": False, "channel": "2.nights"}))
+    r = Rig(tmp_path, fresh=True, start=False, legacy_state_file=str(tmp_path / "old.json"))
+    assert r.app.brightness == 50 and r.app.shuffle is False
+    r.app.startup()
+    try:
+        assert r.state["channel"] == "2.nights" and r.state["mode"] == "play"        # an existing TV doesn't get the wizard
+    finally:
+        r.stop()
