@@ -33,6 +33,9 @@ class Config:
     static_short: str = ""
     static_long: str = ""
 
+    # The line typed out on the boot screen.
+    boot_greeting: str = "Wake up, couch potato..."
+
     # Hardware profile and per-field overrides (see hardware.py).
     hardware: str = "waveshare-2.8-dpi"
     hardware_overrides: dict = field(default_factory=dict)

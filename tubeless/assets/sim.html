@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tubeless simulator</title>
+<style>
+  :root { color-scheme: dark; --bg:#14161c; --panel:#1d2029; --line:#2c3040; --text:#e6e9f2; --dim:#8a91a6; --accent:#fed90f; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:17px; } header span { color:var(--dim); }
+  main { display:flex; gap:22px; padding:20px; flex-wrap:wrap; align-items:flex-start; }
+  .tv { background:#07080b; padding:22px; border-radius:26px; box-shadow:0 10px 40px #0008; border:1px solid var(--line); }
+  #screen { display:block; width:640px; max-width:100%; aspect-ratio:4/3; background:#000; cursor:crosshair; touch-action:none; user-select:none; -webkit-user-drag:none; border-radius:4px; }
+  .side { flex:1; min-width:300px; max-width:560px; display:flex; flex-direction:column; gap:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .card h2 { margin:0 0 8px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); font-weight:600; }
+  .btns { display:flex; flex-wrap:wrap; gap:8px; }
+  button { background:#262a37; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 12px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--accent); } button:active { background:#333849; }
+  label { color:var(--dim); display:inline-flex; gap:6px; align-items:center; }
+  pre { margin:0; font:12px/1.5 ui-monospace, Menlo, monospace; white-space:pre-wrap; word-break:break-word; max-height:230px; overflow:auto; color:#c9cee0; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 14px; font:12px ui-monospace, Menlo, monospace; }
+  .kv b { color:var(--dim); font-weight:400; } .on { color:var(--accent); }
+  kbd { background:#262a37; border:1px solid var(--line); border-radius:4px; padding:0 5px; font:11px ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<header><h1 id="title">Tubeless simulator</h1><span>the real app, running against a pretend Pi and a pretend mpv</span></header>
+<main>
+  <div class="tv"><img id="screen" alt="the TV" draggable="false"></div>
+  <div class="side">
+    <div class="card">
+      <h2>Touch it</h2>
+      <div style="color:var(--dim);margin-bottom:8px">Click &amp; drag on the screen like a finger. Or use the buttons / keys.</div>
+      <div class="btns">
+        <button data-g="tap">Tap <kbd>space</kbd></button>
+        <button data-g="swipe" data-d="left">&#9664; Swipe left <kbd>&#8592;</kbd></button>
+        <button data-g="swipe" data-d="right">Swipe right &#9654; <kbd>&#8594;</kbd></button>
+        <button data-g="swipe" data-d="up">&#9650; Swipe up <kbd>&#8593;</kbd></button>
+        <button data-g="swipe" data-d="down">&#9660; Swipe down <kbd>&#8595;</kbd></button>
+        <button data-g="hold">Hold (menu) <kbd>h</kbd></button>
+      </div>
+      <div style="margin-top:10px"><label><input type="checkbox" id="bezel"> show the bezel's rounded cut-off</label></div>
+    </div>
+    <div class="card"><h2>State</h2><div class="kv" id="state"></div></div>
+    <div class="card"><h2>Log</h2><pre id="log"></pre></div>
+  </div>
+</main>
+<script>
+const W = 640, H = 480;
+const screenEl = document.getElementById('screen');
+let busy = false;
+function refresh() {
+  if (busy) return; busy = true;
+  const img = new Image();
+  img.onload = () => { screenEl.src = img.src; busy = false; };
+  img.onerror = () => { busy = false; };
+  img.src = '/frame.png?bezel=' + (document.getElementById('bezel').checked ? 1 : 0) + '&t=' + Date.now();
+}
+setInterval(refresh, 120); refresh();
+
+function post(path, body) { return fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}).catch(()=>{}); }
+let down = false, lastMove = 0;
+function pos(e) { const r = screenEl.getBoundingClientRect(); return {x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H}; }
+screenEl.addEventListener('pointerdown', e => { e.preventDefault(); screenEl.setPointerCapture(e.pointerId); down = true; post('/api/touch', {phase:'down', ...pos(e)}); });
+screenEl.addEventListener('pointermove', e => { if (!down) return; const n = performance.now(); if (n - lastMove < 25) return; lastMove = n; post('/api/touch', {phase:'move', ...pos(e)}); });
+const lift = e => { if (!down) return; down = false; post('/api/touch', {phase:'up', ...pos(e)}); };
+screenEl.addEventListener('pointerup', lift); screenEl.addEventListener('pointercancel', lift);
+
+document.querySelectorAll('button[data-g]').forEach(b => b.addEventListener('click', () => post('/api/gesture', {kind: b.dataset.g, dir: b.dataset.d})));
+addEventListener('keydown', e => {
+  const map = {ArrowLeft:['swipe','left'], ArrowRight:['swipe','right'], ArrowUp:['swipe','up'], ArrowDown:['swipe','down'], ' ':['tap'], h:['hold']};
+  const m = map[e.key]; if (!m) return; e.preventDefault(); post('/api/gesture', {kind:m[0], dir:m[1]});
+});
+
+async function poll() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    document.getElementById('title').textContent = (s.app.name || 'Tubeless') + ' simulator';
+    const rows = Object.entries(s.app).filter(([k]) => k !== 'name').map(([k, v]) => `<b>${k}</b><span class="${v === true ? 'on' : ''}">${v === null ? '-' : JSON.stringify(v)}</span>`);
+    document.getElementById('state').innerHTML = rows.join('');
+    const log = document.getElementById('log'); const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
+    log.textContent = s.log.join('\n'); if (atEnd) log.scrollTop = log.scrollHeight;
+  } catch (e) {}
+}
+setInterval(poll, 500); poll();
+</script>
+</body>
+</html>
