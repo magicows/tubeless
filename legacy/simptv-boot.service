@@ -1,0 +1,16 @@
+[Unit]
+Description=SimpTV boot screen (Matrix-style status until the first video frame)
+After=pigpiod.service
+Wants=pigpiod.service
+
+[Service]
+User=simpsons
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/simpsons/simptv_boot.py
+# Never compete with mpv for CPU while it is starting; it exits by itself when mpv has a picture.
+Nice=10
+Restart=no
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+# local-only
+snapshots/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+sim_data/
+*.log
+.DS_Store
