@@ -60,6 +60,7 @@ class MenuModel:
                 Item("moon", "Sleep timer", ("sleep_timer",), _minutes(ctx.sleep_timer_min)),
                 Item("sun", "Auto-dim", ("auto_dim",), _minutes(ctx.auto_dim_min)),
                 Item("target", "Calibrate touch", ("calibrate",)),
+                Item("upload", "Upload videos", ("transfer",)),
                 Item("power", "Tap again to confirm" if ctx.confirm_shutdown else "Shut down", ("shutdown",)),
             ]
         rows = [

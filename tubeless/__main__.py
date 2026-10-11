@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .config import MAX_NAME_LENGTH, Config, expand, user_config_path
+from .config import Config, expand, set_config_value, user_config_path
 from .hardware import load_hardware
 
 
@@ -118,9 +118,10 @@ def cmd_sim(args) -> int:
     else:
         player = FakePlayer(cfg.short_static, cfg.long_static, speed=args.speed)
         app = App(cfg, hw, backend, player)
+        app.config_path = work / "config.json"
         app.switch_delay = 3.0 / max(args.speed, 1)
         app.start_background()
-        screen = Screen(hw, player, backend.backlight)
+        screen = Screen(hw, player, backend.backlight, backend.display, mode_fn=lambda: app.mode)
         server = SimServer(hw, screen, backend.touch, app.debug_state, ring, cfg.long_press, port)
     print(f"Tubeless simulator: http://127.0.0.1:{port}/   (Ctrl-C to stop)")
     try:
@@ -159,22 +160,11 @@ def cmd_config(args) -> int:
         print(json.dumps(stored.get(args.key, getattr(Config(), args.key))))
         return 0
 
-    value = _parse_value(args.value)
-    if args.key == "name":
-        value = str(value).strip()
-        if not value:
-            print("the name can't be empty", file=sys.stderr)
-            return 2
-        if len(value) > MAX_NAME_LENGTH:
-            print(f"the name is too long ({len(value)} characters; the menu title fits {MAX_NAME_LENGTH})", file=sys.stderr)
-            return 2
-    stored[args.key] = value
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "w") as f:
-        json.dump(stored, f, indent=2)
-        f.write("\n")
-    os.replace(tmp, path)
+    try:
+        value = set_config_value(path, args.key, _parse_value(args.value))
+    except ValueError as e:
+        print(str(e).lower() if args.key == "name" else str(e), file=sys.stderr)
+        return 2
     print(f"{args.key} = {json.dumps(value)}   (saved in {path})")
     if args.restart:
         import subprocess

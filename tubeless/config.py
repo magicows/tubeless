@@ -47,6 +47,9 @@ class Config:
     hardware: str = "waveshare-2.8-dpi"
     hardware_overrides: dict = field(default_factory=dict)
 
+    # The upload page (only runs while the TV is in upload mode).
+    web_port: int = 8080
+
     # Touch feel.
     menu_timeout: float = 5.0
     long_press: float = 1.0
@@ -99,3 +102,33 @@ class Config:
                 log.info("config loaded from %s", expand(candidate))
                 return cfg
         return cls()
+
+
+def set_config_value(path, key: str, value):
+    """
+    Change one setting in config.json (creating the file if needed), validating it. Used by `config set` and by
+    the web page's rename. Raises ValueError with a message fit to show the user.
+    """
+    import json
+    known = {f.name for f in fields(Config)}
+    if key not in known:
+        raise ValueError(f"unknown setting {key!r}")
+    if key == "name":
+        value = str(value).strip()
+        if not value:
+            raise ValueError("The name can't be empty.")
+        if len(value) > MAX_NAME_LENGTH:
+            raise ValueError(f"That name is too long ({len(value)} characters; the menu title fits {MAX_NAME_LENGTH}).")
+    path = expand(path)
+    stored = {}
+    if path.is_file():
+        with open(path) as f:
+            stored = json.load(f)
+    stored[key] = value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(stored, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    return value

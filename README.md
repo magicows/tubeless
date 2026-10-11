@@ -63,6 +63,13 @@ packaging/         systemd unit templates
 docs/              architecture, roadmap, trial instructions
 ```
 
+## Getting videos onto the TV
+
+With no videos, the TV says so and offers **Upload page**. (It is also in Settings > Upload videos.) The screen then
+shows an address, a QR code and a 4-digit PIN; open it on your phone or laptop (same Wi-Fi), enter the PIN, pick a
+channel and send files. The same page renames the TV. Hold the TV's screen to leave. Copying over SFTP/scp into
+`~/videos/<channel>/` works too.
+
 ## Make it yours
 
 Every TV has its own name, shown in the menu title and on the boot screen (up to 16 characters):

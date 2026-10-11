@@ -271,7 +271,9 @@ def read_model() -> str:
 # ─────────────────────────────────────────────
 #  Pieces that are pure text, so they can be tested
 # ─────────────────────────────────────────────
-PACKAGES = ["mpv", "python3-evdev", "python3-psutil", "python3-pil", "python3-numpy", "pigpio", "python3-pigpio"]
+PACKAGES = ["mpv", "python3-evdev", "python3-psutil", "python3-pil", "python3-numpy", "pigpio", "python3-pigpio",
+            "mediainfo"]
+OPTIONAL_PACKAGES = ["python3-segno", "python3-qrcode"]       # QR code on the upload screen; first one the OS has wins
 UNITS = ["tubeless.service", "tubeless-boot.service"]
 
 
@@ -418,6 +420,22 @@ def step_packages(ctx: Context) -> None:
     # --no-install-recommends matters: mpv's "recommended" extras pull in ~280 desktop packages, which also runs
     # a 512 MB Pi out of memory while apt works out what to install.
     ctx.runner.run("apt-get", "-o", "Acquire::Retries=5", "install", "-y", "--no-install-recommends", *missing, env=env)
+    _install_optional_qr(ctx, env)
+
+
+def _install_optional_qr(ctx: Context, env) -> None:
+    """A QR code is a nicety: take the first QR library the OS offers, and carry on without one."""
+    for pkg in OPTIONAL_PACKAGES:
+        have = ctx.runner.query("dpkg", "-s", pkg)
+        if have.returncode == 0 and "install ok installed" in have.stdout:
+            return
+    for pkg in OPTIONAL_PACKAGES:
+        try:
+            ctx.runner.run("apt-get", "install", "-y", "--no-install-recommends", pkg, env=env)
+            return
+        except Exception:
+            continue
+    ctx.say("      (no QR library available; the upload screen will show the address only)")
 
 
 def step_display(ctx: Context) -> None:

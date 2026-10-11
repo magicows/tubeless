@@ -12,18 +12,22 @@ from __future__ import annotations
 import logging
 import queue
 import random
+import socket
 import threading
 import time
 from typing import Optional
 
+from . import qr as qrcodes
 from . import render
-from .config import Config, expand
+from .config import Config, expand, set_config_value, user_config_path
 from .gestures import GestureRecognizer
 from .hardware import Hardware, apply_affine, solve_affine
 from .library import Library, Plan, Playlists
 from .menu import AUTO_DIM_STEPS, SLEEP_TIMER_STEPS, MenuContext, MenuModel, next_step
+from .pixels import image_to_565
 from .skip import skip_target
 from .state import Settings, Store
+from .web import Session, UploadManager, WebServer, local_ip
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +47,7 @@ class App:
         self.cfg, self.hw = cfg, hw
         self.touch, self.backlight, self.power = backend.touch, backend.backlight, backend.power
         self.audio = getattr(backend, "audio", None)
+        self.display = getattr(backend, "display", None)
         self.player = player
         self.store = store or Store(cfg.data)
         self.settings = Settings(self.store, expand(cfg.legacy_state_file))
@@ -88,6 +93,12 @@ class App:
         self._switch_timer: Optional[threading.Timer] = None
         self._waking = False
         self._overlay_pending = None          # an overlay the player wasn't ready to show yet (retried by the tracker)
+        self.config_path = user_config_path()  # where the web page's rename is saved
+        self.web: Optional[WebServer] = None
+        self.uploads: Optional[UploadManager] = None
+        self.web_info: Optional[dict] = None   # {"pin": ..., "urls": [...]} while upload mode is on
+        self._notice, self._notice_until = "", 0.0
+        self._screen_dirty, self._last_screen = True, 0.0
         self._posted_deadline: Optional[float] = None
         self._next_tick = 0.0
         self.m3u_path = str(self.store.path("playlist.m3u"))
@@ -163,7 +174,9 @@ class App:
             self.channel_index = names.index(saved)
         idx = self.library.next_playable(self.channel_index, +1)
         if idx is None:
-            raise RuntimeError("No channel has any videos")
+            log.warning("no videos found in %s: showing the 'no videos yet' screen", self.library.root)
+            self.enter_empty()
+            return
         if idx != self.channel_index:
             log.warning("channel %s has no videos; starting on %s instead", names[self.channel_index], names[idx])
             self.channel_index = idx
@@ -445,6 +458,9 @@ class App:
             self.begin_calibration()
         elif kind == "shutdown":
             self.request_shutdown()
+        elif kind == "transfer":
+            self.close_menu()
+            self.start_transfer()
         elif kind == "channel":
             self.close_menu()
             self.switch_channel(action[1])
@@ -566,6 +582,10 @@ class App:
         elif self.mode == "calibrate":
             if not (self._calib and self._calib.get("done")):
                 self._calibration_gesture(g)
+        elif self.mode == "empty":
+            self._empty_gesture(g)
+        elif self.mode == "transfer":
+            self._transfer_gesture(g)
         elif self.mode != "play":
             pass                                                # standby / shutting down: ignore
         elif self.menu_open:
@@ -683,7 +703,7 @@ class App:
         last_restart = 0.0
         while not self.stop_event.wait(self.exit_check_every):
             try:
-                if self.mode == "shutdown":
+                if self.mode in ("shutdown", "empty", "transfer"):
                     continue
                 if not self.player.alive():
                     if time.time() - last_restart < self.min_restart_gap:
@@ -714,10 +734,12 @@ class App:
     #  Tracker: where are we in the episode?
     # ─────────────────────────────────────────
     def _tracker_loop(self) -> None:
-        while not self.stop_event.wait(min(self.tracker_every, 1.0) if (self._pending_resume or self._overlay_pending)
+        while not self.stop_event.wait(min(self.tracker_every, 1.0) if (self._pending_resume or self._overlay_pending
+                                                                        or self.mode == "transfer")
                                        else self.tracker_every):
             try:
                 self._retry_overlay()
+                self._refresh_screen()
                 self._track()
             except Exception:
                 log.exception("tracker error")
@@ -751,6 +773,134 @@ class App:
             self.playlists.set_progress(self.plan.channel, rel, t)
 
     # ─────────────────────────────────────────
+    #  Full-screen modes drawn straight to the display (no player needed): "no videos yet" and the upload page
+    # ─────────────────────────────────────────
+    def enter_empty(self) -> None:
+        self.mode = "empty"
+        self._screen_dirty = True
+        self._draw_screen()
+
+    def start_transfer(self) -> None:
+        """Stop the player, start the upload page, and show its address, QR code and PIN on the TV."""
+        if self.mode == "transfer":
+            return
+        self.save_progress_now()
+        self._close_menu_quietly()
+        self._clear_overlay()
+        try:
+            self.player.stop()
+        except Exception:
+            pass
+        self.uploads = UploadManager(self.library.root)
+        session = Session()
+        server = WebServer(self.uploads, session, _WebHooks(self), host="0.0.0.0", port=self.cfg.web_port)
+        try:
+            port = server.start()
+        except OSError as e:
+            log.error("could not start the upload page: %s", e)
+            self._notice, self._notice_until = f"Couldn't start the upload page ({e.strerror or e}).", time.time() + 6
+            self._back_from_transfer()
+            return
+        self.web = server
+        host = socket.gethostname().split(".")[0]
+        ip = local_ip()
+        self.web_info = {"pin": session.pin, "port": port, "urls": [f"http://{ip}:{port}", f"http://{host}.local:{port}"]}
+        log.info("upload page on %s (PIN shown on the TV)", self.web_info["urls"])
+        self.mode = "transfer"
+        self._screen_dirty = True
+        self._draw_screen()
+
+    def stop_transfer(self) -> None:
+        if self.web is not None:
+            self.web.stop()
+        self.web, self.web_info = None, None
+        log.info("upload page stopped")
+        self._back_from_transfer()
+
+    def _back_from_transfer(self) -> None:
+        if self.library.next_playable(self.channel_index, +1) is None:
+            self.enter_empty()
+            return
+        self.mode = "play"
+        idx = self.library.next_playable(self.channel_index, +1)
+        self.channel_index = idx
+        self.start_playback()
+
+    def _empty_gesture(self, g: tuple) -> None:
+        if g[0] != "tap":
+            return
+        button = render.empty_button_at(g[1], g[2])
+        if button == "upload":
+            self.start_transfer()
+        elif button == "recheck":
+            if self.library.next_playable(self.channel_index, +1) is None:
+                self._notice, self._notice_until = "Still no videos found.", time.time() + 4
+                self._screen_dirty = True
+                self._draw_screen()
+            else:
+                self._back_from_transfer()
+
+    def _transfer_gesture(self, g: tuple) -> None:
+        if g[0] == "long_press":
+            self.stop_transfer()
+
+    def _draw_screen(self) -> None:
+        if self.display is None:
+            return
+        now = time.time()
+        notice = self._notice if now < self._notice_until else ""
+        if self.mode == "empty":
+            img = render.render_empty(self.hw, self.name, self.cfg.videos_dir, notice)
+        elif self.mode == "transfer" and self.web_info:
+            snap = self.uploads.snapshot() if self.uploads else {"active": [], "completed": []}
+            status, progress = [], None
+            if snap["active"]:
+                a = snap["active"][0]
+                status.append(f"Uploading  {a['name']}")
+                progress = a["received"] / a["total"] if a["total"] else None
+            done = len(snap["completed"])
+            status.append(f"{done} file{'s' if done != 1 else ''} received" if done else
+                          ("" if snap["active"] else "Waiting for you to connect..."))
+            if notice:
+                status.append(notice)
+            matrix = qrcodes.matrix(self.web_info["urls"][0] + "/")
+            img = render.render_transfer(self.hw, self.name, self.web_info["urls"], self.web_info["pin"], matrix,
+                                         [t for t in status if t], progress)
+        else:
+            return
+        self.display.show(image_to_565(img))
+        self._screen_dirty, self._last_screen = False, now
+
+    def _refresh_screen(self) -> None:
+        if self.mode not in ("empty", "transfer"):
+            return
+        now = time.time()
+        if self._notice and now >= self._notice_until:
+            self._notice = ""
+            self._screen_dirty = True
+        if self._screen_dirty or (self.mode == "transfer" and now - self._last_screen >= 1.0):
+            self._draw_screen()
+
+    # --- what the web page asks of the TV -----------------------------------------------------------------------
+    def rename(self, name: str) -> str:
+        value = set_config_value(self.config_path, "name", name)        # raises ValueError with a message for the page
+        self.name = value
+        self._screen_dirty = True
+        log.info("renamed to %r from the upload page", value)
+        return value
+
+    def web_state(self) -> dict:
+        channels = []
+        for c in self.library.channels():
+            channels.append({"name": c.name, "label": c.label, "count": len(self.library.videos(c))})
+        return {"name": self.name, "channels": channels}
+
+    def on_uploaded(self, info: dict) -> None:
+        log.info("uploaded %s/%s", info.get("channel"), info.get("file"))
+        self._screen_dirty = True
+
+
+    # ─────────────────────────────────────────
     #  For the simulator / tests
     # ─────────────────────────────────────────
     def debug_state(self) -> dict:
@@ -768,4 +918,21 @@ class App:
             "backlight": getattr(self.backlight, "percent", None),
             "last_gesture": list(self.last_gesture[:2]) if self.last_gesture else None,
             "shutdown_requested": getattr(self.power, "shutdown_requested", False),
+            "upload_page": self.web_info,
         }
+
+
+class _WebHooks:
+    """What the upload page may ask of the app (kept as a narrow interface)."""
+
+    def __init__(self, app: "App"):
+        self.app = app
+
+    def state(self) -> dict:
+        return self.app.web_state()
+
+    def set_name(self, name: str) -> str:
+        return self.app.rename(name)
+
+    def uploaded(self, info: dict) -> None:
+        self.app.on_uploaded(info)

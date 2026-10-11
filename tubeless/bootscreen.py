@@ -27,6 +27,7 @@ from . import fonts
 from .config import Config, expand
 from .hardware import Hardware
 from .library import Library
+from .pixels import pack565, unpack565          # noqa: F401  (re-exported)
 from .render import fit_text
 
 log = logging.getLogger(__name__)
@@ -104,16 +105,6 @@ class Rain:
 # ─────────────────────────────────────────────
 #  The text layer, and compositing it over the rain
 # ─────────────────────────────────────────────
-def pack565(r, g, b):
-    r, g, b = (np.asarray(v).astype(np.uint16) for v in (r, g, b))
-    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-
-
-def unpack565(px: np.ndarray) -> np.ndarray:
-    r, g, b = ((px >> 11) & 31) << 3, ((px >> 5) & 63) << 2, (px & 31) << 3
-    return np.stack([r, g, b], axis=-1).astype(np.uint8)
-
-
 def draw_foreground(hw: Hardware, name: str, greeting: str, t: float, lines: List[tuple],
                     progress: float, status: str) -> Image.Image:
     """

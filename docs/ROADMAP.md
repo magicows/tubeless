@@ -38,10 +38,10 @@
 
 ## Next
 
-1. **Friendly empty states**: no videos yet (or no channels) should show a message on the TV, not restart-loop.
+1. ~~**Friendly empty states**~~ done: with no videos the TV shows "No videos yet" with *Upload page* and *Check again* buttons.
 2. **Library index**: scan new files, record durations (mediainfo), keep it fresh when files appear.
 3. **Web companion** (small, streaming, low-memory): TV name (today: `python -m tubeless config set name ...`), channel management, settings, status/logs.
-4. **Transfer mode**: menu toggle, fixed info screen with URL and QR code, resumable chunked uploads written to a `.part`
+4. ~~**Transfer mode**~~ done (Settings > Upload videos, or the empty screen): menu toggle, fixed info screen with URL and QR code, resumable chunked uploads written to a `.part`
    file and renamed when done, disk-space check, file advice.
 5. **Setup mode**: first-boot hotspot with a QR code, captive portal, Wi-Fi country and the phone's clock/timezone.
 6. **Updater** from GitHub releases, with rollback.

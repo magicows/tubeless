@@ -76,13 +76,15 @@ def _bezel_mask(hw: Hardware) -> np.ndarray:
 class Screen:
     """Composes what you would see on the TV."""
 
-    def __init__(self, hw: Hardware, player=None, backlight=None, display=None):
+    def __init__(self, hw: Hardware, player=None, backlight=None, display=None, mode_fn=None):
         self.hw, self.player, self.backlight, self.display = hw, player, backlight, display
+        self.mode_fn = mode_fn                      # full-screen modes draw to the framebuffer, not over the video
         self._bezel = _bezel_mask(hw)
 
     def compose(self, bezel: bool = False) -> Image.Image:
         hw = self.hw
-        if self.display is not None and self.player is None:
+        framebuffer_mode = self.mode_fn is not None and self.mode_fn() in ("empty", "transfer")
+        if self.display is not None and (self.player is None or framebuffer_mode):
             with self.display.lock:
                 px = self.display.frame565
             base = unpack565(px).astype(np.float32) if px is not None else np.zeros((hw.view_h, hw.view_w, 3), np.float32)

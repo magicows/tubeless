@@ -39,7 +39,7 @@ class Rig:
         kwargs = dict(videos_dir=str(videos), data_dir=str(tmp_path / "data"),
                       static_short="/static_short.mp4", static_long="/static_long.mp4",
                       legacy_state_file=str(tmp_path / "no-legacy.json"),
-                      menu_timeout=2.0, long_press=0.25)
+                      menu_timeout=2.0, long_press=0.25, web_port=0)
         kwargs.update(cfg_over)
         self.cfg = Config(**kwargs)
         if not fresh:                                      # an existing install (no first-run wizard)
@@ -55,6 +55,8 @@ class Rig:
         self.app.min_restart_gap = 0.0
         self.app.progress_save_every = 0.1
         self.app.tracker_every = 0.05
+        self.app.config_path = tmp_path / "config.json"
+        self.display = self.backend.display
         # what the touch panel *really* reports: by default what the app already assumes
         self.panel_affine = panel_affine or HW.touch_affine
         self._to_raw = invert_affine(self.panel_affine)
@@ -121,3 +123,23 @@ class Rig:
     @property
     def state(self):
         return self.app.debug_state()
+
+
+# --- talking to the upload page like a phone would ---------------------------------------------------------
+import json as _json
+import urllib.error as _urlerror
+import urllib.request as _urlrequest
+
+
+def http(base, method, path, body=None, token=None, raw=None):
+    data = raw if raw is not None else (_json.dumps(body).encode() if body is not None else None)
+    req = _urlrequest.Request(base + path, data=data, method=method)
+    if token:
+        req.add_header("X-Token", token)
+    try:
+        with _urlrequest.urlopen(req, timeout=10) as r:
+            ctype = r.headers.get("Content-Type", "")
+            payload = r.read()
+            return r.status, (_json.loads(payload) if ctype.startswith("application/json") else payload)
+    except _urlerror.HTTPError as e:
+        return e.code, _json.loads(e.read() or b"{}")

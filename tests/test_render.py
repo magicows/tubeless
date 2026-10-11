@@ -95,7 +95,7 @@ def test_menu_items_per_page():
     assert main[6].current and not main[5].current
     m.open_page("settings")
     settings = m.items(CTX)
-    assert [i.action[0] for i in settings] == ["page", "shuffle", "reshuffle", "sleep_timer", "auto_dim", "calibrate", "shutdown"]
+    assert [i.action[0] for i in settings] == ["page", "shuffle", "reshuffle", "sleep_timer", "auto_dim", "calibrate", "transfer", "shutdown"]
     assert m.items(MenuContext(confirm_shutdown=True))[-1].label == "Tap again to confirm"
 
 

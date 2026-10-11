@@ -126,6 +126,10 @@ def _icon(img, d, kind, cx, cy, color):
         O(8, 2)
         L([(-12, 0), (12, 0)])
         L([(0, -12), (0, 12)])
+    elif kind == "upload":
+        P((0, -12), (-8, -3), (8, -3))
+        R(-3, -3, 3, 5)
+        L([(-10, 4), (-10, 10), (10, 10), (10, 4)], 2)
     elif kind == "reshuffle":
         d.arc((_s(cx - 9), _s(cy - 9), _s(cx + 9), _s(cy + 9)), 40, 330, fill=color, width=_s(3))
         P((6, -12), (13, -4), (3, -3))
@@ -305,3 +309,97 @@ def from_panel_bgra(raw: bytes, w: int, h: int, hw: Hardware) -> np.ndarray:
     """The inverse of to_panel_bgra(): back to a landscape premultiplied BGRA array (used by the simulator)."""
     arr = np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 4)
     return np.ascontiguousarray(np.rot90(arr, -hw.rot_k))
+
+
+# ─────────────────────────────────────────────
+#  Full-screen screens drawn straight to the framebuffer (no player running): "no videos" and upload mode
+# ─────────────────────────────────────────────
+MATRIX_PAPER = (0, 0, 0)
+
+# the two buttons on the empty screen, in the landscape view's coordinates
+EMPTY_BUTTONS = {"upload": (84, 332, 322, 392), "recheck": (338, 332, 556, 392)}
+
+
+def empty_button_at(vx: float, vy: float) -> str:
+    """Which button a tap on the 'no videos' screen is on ('' if neither). A little generous, for fingers."""
+    for name, (x0, y0, x1, y1) in EMPTY_BUTTONS.items():
+        if x0 - 10 <= vx <= x1 + 10 and y0 - 12 <= vy <= y1 + 12:
+            return name
+    return ""
+
+
+def render_empty(hw: Hardware, name: str, folder: str, notice: str = "") -> Image.Image:
+    img, d = _blank(hw)
+    x0, y0, x1, y1 = hw.safe_rect
+    left = x0 + 24
+    d.rectangle(hw.safe_rect, outline=(0, 55, 20, 255), width=1)
+    d.text((left, y0 + 16), fit_text(d, name.upper(), fonts.load(fonts.MONO_BOLD, 22), 300), font=fonts.load(fonts.MONO_BOLD, 22), fill=MATRIX_DIM)
+    d.text((left, y0 + 52), "NO VIDEOS YET", font=fonts.load(fonts.MONO_BOLD, 38), fill=MATRIX)
+    lines = [
+        ("This TV plays the videos in this folder,", MATRIX_MID),
+        ("one sub-folder for each channel:", MATRIX_MID),
+        ("    " + folder + "/<channel>/", MATRIX),
+        ("", MATRIX_MID),
+        ("Copy them over the network (SFTP/scp),", MATRIX_MID),
+        ("or add them from your phone or laptop.", MATRIX_MID),
+    ]
+    y = y0 + 112
+    for text, colour in lines:
+        d.text((left, y), text, font=fonts.load(fonts.MONO, 16), fill=colour)
+        y += 24
+    for key, label in (("upload", "UPLOAD PAGE"), ("recheck", "CHECK AGAIN")):
+        bx0, by0, bx1, by1 = EMPTY_BUTTONS[key]
+        solid = key == "upload"
+        d.rectangle((bx0, by0, bx1, by1), fill=MATRIX if solid else (0, 0, 0, 255), outline=MATRIX, width=2)
+        d.text(((bx0 + bx1) // 2, (by0 + by1) // 2), label, font=fonts.load(fonts.MONO_BOLD, 20),
+               fill=(0, 20, 6, 255) if solid else MATRIX, anchor="mm")
+    d.text((x0 + 24, y1 - 22), notice or "Tap a button.", font=fonts.load(fonts.MONO, 14), fill=MATRIX_DIM)
+    return img
+
+
+def render_transfer(hw: Hardware, name: str, urls: Sequence[str], pin: str, qr: Optional[Sequence[Sequence[bool]]],
+                    status: Sequence[str], progress: Optional[float] = None) -> Image.Image:
+    img, d = _blank(hw)
+    x0, y0, x1, y1 = hw.safe_rect
+    left = x0 + 24
+    d.rectangle(hw.safe_rect, outline=(0, 55, 20, 255), width=1)
+    d.text((left, y0 + 14), fit_text(d, name.upper(), fonts.load(fonts.MONO_BOLD, 18), 300), font=fonts.load(fonts.MONO_BOLD, 18), fill=MATRIX_DIM)
+    d.text((left, y0 + 40), "UPLOAD PAGE", font=fonts.load(fonts.MONO_BOLD, 32), fill=MATRIX)
+
+    top = y0 + 92
+    size = 176
+    if qr:
+        n = len(qr)
+        scale = max(2, size // (n + 4))
+        side = scale * (n + 4)
+        d.rectangle((left, top, left + side, top + side), fill=(255, 255, 255, 255))      # dark-on-light, quiet zone included
+        for r, row in enumerate(qr):
+            for c, dark in enumerate(row):
+                if dark:
+                    px, py = left + (c + 2) * scale, top + (r + 2) * scale
+                    d.rectangle((px, py, px + scale - 1, py + scale - 1), fill=(0, 0, 0, 255))
+        text_x = left + side + 22
+    else:
+        text_x = left
+    y = top
+    d.text((text_x, y), "Scan, or open on your phone:" if qr else "Open on your phone or laptop:", font=fonts.load(fonts.MONO, 15), fill=MATRIX_MID)
+    y += 24
+    for url in urls:
+        d.text((text_x, y), fit_text(d, url, fonts.load(fonts.MONO_BOLD, 16), x1 - 12 - text_x), font=fonts.load(fonts.MONO_BOLD, 16), fill=MATRIX)
+        y += 24
+    y += 12
+    d.text((text_x, y), "PIN", font=fonts.load(fonts.MONO, 15), fill=MATRIX_MID)
+    d.text((text_x + 48, y - 14), pin, font=fonts.load(fonts.MONO_BOLD, 46), fill=(220, 255, 230, 255))
+
+    sy = max(top + (side if qr else 0) + 14, y + 52)
+    for line in status[:3]:
+        d.text((left, sy), fit_text(d, line, fonts.load(fonts.MONO, 16), x1 - 24 - left), font=fonts.load(fonts.MONO, 16), fill=MATRIX_MID)
+        sy += 22
+    if progress is not None:
+        by0, by1 = sy + 4, sy + 18
+        d.rectangle((left, by0, x1 - 24, by1), outline=MATRIX_DIM, width=1)
+        w = int((x1 - 24 - left - 4) * max(0.0, min(1.0, progress)))
+        if w > 0:
+            d.rectangle((left + 2, by0 + 2, left + 2 + w, by1 - 2), fill=MATRIX)
+    d.text((x0 + 24, y1 - 22), "HOLD the screen to finish and go back to the TV", font=fonts.load(fonts.MONO, 14), fill=MATRIX_DIM)
+    return img

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TV upload</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0f0c; --panel:#121a14; --line:#1f2f24; --text:#e4efe7; --dim:#8da596; --accent:#35f26b; --warn:#ffb84d; --bad:#ff6b6b; --info:#7cc4ff; }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding:env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom)); }
+  main { max-width:640px; margin:0 auto; }
+  header { padding:22px 0 8px; display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  h1 { margin:0; font:700 22px/1.2 ui-monospace, Menlo, monospace; color:var(--accent); letter-spacing:.04em; text-transform:uppercase; word-break:break-word; }
+  .sub { color:var(--dim); font-size:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; margin:14px 0; }
+  .card h2 { margin:0 0 10px; font-size:13px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); font-weight:600; }
+  label { display:block; color:var(--dim); font-size:14px; margin-bottom:6px; }
+  input[type=text], input[type=tel], input[type=password], select { width:100%; background:#0b130d; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:12px 14px; font:inherit; }
+  input:focus, select:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .row { display:flex; gap:10px; } .row > * { flex:1; } .row > button { flex:0 0 auto; }
+  button { background:var(--accent); color:#04210d; border:0; border-radius:10px; padding:12px 18px; font:700 16px/1 inherit; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button:disabled { opacity:.45; cursor:default; }
+  #pin { font:700 34px/1 ui-monospace, Menlo, monospace; letter-spacing:.5em; text-align:center; }
+  .drop { border:2px dashed var(--line); border-radius:14px; padding:26px 14px; text-align:center; color:var(--dim); cursor:pointer; }
+  .drop.over { border-color:var(--accent); color:var(--text); }
+  .msg { margin:10px 0 0; font-size:14px; min-height:1.2em; } .msg.bad { color:var(--bad); } .msg.ok { color:var(--accent); }
+  .file { border-top:1px solid var(--line); padding:12px 0; } .file:first-child { border-top:0; }
+  .file .top { display:flex; justify-content:space-between; gap:10px; font-size:15px; word-break:break-all; }
+  .file .meta { color:var(--dim); font-size:13px; }
+  .bar { height:8px; background:#0b130d; border-radius:6px; overflow:hidden; margin:8px 0 4px; }
+  .bar > i { display:block; height:100%; width:0; background:var(--accent); transition:width .2s; }
+  .adv { margin:6px 0 0; padding:0; list-style:none; font-size:14px; }
+  .adv li { padding:6px 10px; border-left:3px solid var(--line); margin:4px 0; background:#0d150f; border-radius:0 8px 8px 0; }
+  .adv .ok { border-color:var(--accent); } .adv .info { border-color:var(--info); } .adv .warn { border-color:var(--warn); }
+  small { color:var(--dim); }
+  .hide { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1 id="tvname">TV</h1><span class="sub" id="space"></span></header>
+
+  <section id="login" class="card">
+    <h2>Enter the PIN on the TV</h2>
+    <input id="pin" type="tel" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="----" aria-label="PIN">
+    <p class="msg" id="loginmsg"></p>
+    <button id="go" style="width:100%">Connect</button>
+  </section>
+
+  <div id="app" class="hide">
+    <section class="card">
+      <h2>Name this TV</h2>
+      <div class="row"><input id="nameIn" type="text" maxlength="16" autocomplete="off" aria-label="TV name"><button id="saveName" class="ghost">Save</button></div>
+      <p class="msg" id="namemsg"></p>
+    </section>
+
+    <section class="card">
+      <h2>Add videos</h2>
+      <label for="channel">Put them in this channel</label>
+      <select id="channel"></select>
+      <input id="newChannel" class="hide" type="text" maxlength="40" placeholder="Name the new channel (e.g. 1.cartoons)" style="margin-top:10px" aria-label="New channel name">
+      <div class="drop" id="drop" tabindex="0" role="button" style="margin-top:14px">Tap to choose videos<br><small>or drop them here</small></div>
+      <input id="files" type="file" accept="video/*,.mkv,.mp4,.m4v,.mov,.avi,.webm" multiple class="hide">
+      <p class="msg" id="upmsg"></p>
+      <small>Keep this page open while uploading. When you've finished, hold the TV's screen to stop upload mode and start watching.</small>
+    </section>
+
+    <section class="card hide" id="results"><h2>Uploads</h2><div id="list"></div></section>
+  </div>
+</main>
+
+<script>
+const CHUNK = 2 * 1024 * 1024;
+const $ = id => document.getElementById(id);
+const enc = encodeURIComponent;
+let token = sessionStorage.getItem('tvtoken') || '';
+let state = {channels: [], free_bytes: 0};
+
+function hr(bytes) { const u = ['B','KB','MB','GB']; let i = 0; while (bytes >= 1024 && i < 3) { bytes /= 1024; i++; } return bytes.toFixed(i ? 1 : 0) + ' ' + u[i]; }
+function say(el, text, cls) { el.textContent = text || ''; el.className = 'msg' + (cls ? ' ' + cls : ''); }
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {...opts, headers: {...(opts.headers || {}), 'X-Token': token, 'Content-Type': 'application/json'}});
+  let data = {}; try { data = await res.json(); } catch (e) {}
+  if (res.status === 401) { showLogin(); throw Object.assign(new Error('PIN required'), {status: 401}); }
+  if (!res.ok) throw Object.assign(new Error(data.error || ('Error ' + res.status)), {status: res.status, data});
+  return data;
+}
+
+function showLogin() { token = ''; sessionStorage.removeItem('tvtoken'); $('login').classList.remove('hide'); $('app').classList.add('hide'); }
+
+async function login() {
+  say($('loginmsg'), '');
+  try {
+    const res = await fetch('/api/login', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pin: $('pin').value})});
+    const data = await res.json();
+    if (!res.ok) return say($('loginmsg'), data.error || 'Could not connect.', 'bad');
+    token = data.token; sessionStorage.setItem('tvtoken', token);
+    await load();
+  } catch (e) { say($('loginmsg'), 'Could not reach the TV. Are you on the same Wi-Fi?', 'bad'); }
+}
+
+async function load() {
+  state = await api('/api/state');
+  $('login').classList.add('hide'); $('app').classList.remove('hide');
+  $('tvname').textContent = state.name; document.title = state.name + ' upload';
+  if (document.activeElement !== $('nameIn')) $('nameIn').value = state.name;
+  $('space').textContent = hr(state.free_bytes) + ' free';
+  const sel = $('channel'), keep = sel.value;
+  sel.innerHTML = '';
+  for (const c of state.channels) sel.add(new Option(c.label + '  (' + c.count + ')', c.name));
+  sel.add(new Option('New channel...', '__new__'));
+  if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+  else if (!state.channels.length) sel.value = '__new__';
+  $('newChannel').classList.toggle('hide', sel.value !== '__new__');
+}
+
+$('go').onclick = login;
+$('pin').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+$('pin').addEventListener('input', () => { if ($('pin').value.length === 4) login(); });
+$('channel').onchange = () => $('newChannel').classList.toggle('hide', $('channel').value !== '__new__');
+
+$('saveName').onclick = async () => {
+  try { const r = await api('/api/name', {method: 'POST', body: JSON.stringify({name: $('nameIn').value})}); say($('namemsg'), 'Saved. The TV now shows "' + r.name + '" (it appears in the menu next time it opens).', 'ok'); await load(); }
+  catch (e) { say($('namemsg'), e.message, 'bad'); }
+};
+
+const drop = $('drop');
+drop.onclick = () => $('files').click();
+drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('files').click(); } };
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => start([...e.dataTransfer.files]));
+$('files').onchange = e => { start([...e.target.files]); e.target.value = ''; };
+
+let busy = false, queue = [];
+async function start(files) {
+  say($('upmsg'), '');
+  let channel = $('channel').value;
+  if (channel === '__new__') {
+    channel = $('newChannel').value.trim();
+    if (!channel) return say($('upmsg'), 'Type a name for the new channel first.', 'bad');
+    try { channel = (await api('/api/channel', {method: 'POST', body: JSON.stringify({name: channel})})).channel; await load(); $('channel').value = channel; $('newChannel').classList.add('hide'); }
+    catch (e) { return say($('upmsg'), e.message, 'bad'); }
+  }
+  const exts = ['.mp4','.mkv','.m4v','.mov','.avi','.webm'];
+  for (const f of files) {
+    const row = addRow(f);
+    if (!exts.some(x => f.name.toLowerCase().endsWith(x))) { finish(row, 'Not a video type this TV plays (' + exts.join(' ') + ').', 'bad'); continue; }
+    if (f.size === 0) { finish(row, 'This file is empty.', 'bad'); continue; }
+    if (f.size > state.free_bytes) { finish(row, 'Not enough space: needs ' + hr(f.size) + ', the TV has ' + hr(state.free_bytes) + '.', 'bad'); continue; }
+    queue.push({f, channel, row});
+  }
+  if (!busy) run();
+}
+
+async function run() {
+  busy = true;
+  while (queue.length) { const j = queue.shift(); await uploadFile(j.f, j.channel, j.row); }
+  busy = false;
+  try { await load(); } catch (e) {}
+}
+
+function addRow(f) {
+  $('results').classList.remove('hide');
+  const d = document.createElement('div'); d.className = 'file';
+  d.innerHTML = '<div class="top"><span class="n"></span><span class="pct"></span></div><div class="bar"><i></i></div><div class="meta"></div><ul class="adv"></ul>';
+  d.querySelector('.n').textContent = f.name; d.querySelector('.meta').textContent = hr(f.size) + ' - waiting';
+  $('list').prepend(d); return d;
+}
+function finish(row, text, cls) { row.querySelector('.meta').textContent = text; row.querySelector('.meta').style.color = cls === 'bad' ? 'var(--bad)' : ''; }
+
+function putChunk(url, blob, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('PUT', url); x.setRequestHeader('X-Token', token);
+    x.upload.onprogress = e => onProgress(e.loaded);
+    x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch (e) {} x.status >= 200 && x.status < 300 ? resolve(d) : reject(Object.assign(new Error(d.error || ('Error ' + x.status)), {status: x.status, data: d})); };
+    x.onerror = () => reject(Object.assign(new Error('Connection problem'), {status: 0}));
+    x.send(blob);
+  });
+}
+
+async function uploadFile(f, channel, row) {
+  const base = '/api/upload?channel=' + enc(channel) + '&name=' + enc(f.name) + '&total=' + f.size;
+  const bar = row.querySelector('.bar > i'), pct = row.querySelector('.pct'), meta = row.querySelector('.meta');
+  let offset = 0, retries = 0, t0 = Date.now(), startOffset = 0;
+  try { offset = (await api('/api/upload/status?channel=' + enc(channel) + '&name=' + enc(f.name))).received || 0; } catch (e) { if (e.status === 401) return; }
+  startOffset = offset;
+  while (offset < f.size) {
+    const end = Math.min(offset + CHUNK, f.size);
+    try {
+      const r = await putChunk(base + '&offset=' + offset, f.slice(offset, end), loaded => {
+        const done = offset + loaded, secs = (Date.now() - t0) / 1000;
+        bar.style.width = (100 * done / f.size) + '%'; pct.textContent = Math.floor(100 * done / f.size) + '%';
+        meta.textContent = hr(done) + ' of ' + hr(f.size) + (secs > 1 ? '  -  ' + hr((done - startOffset) / secs) + '/s' : '');
+      });
+      offset = r.received; retries = 0;
+      if (r.done) { bar.style.width = '100%'; pct.textContent = 'Done'; meta.textContent = 'Saved as "' + r.file + '" in ' + channel; showAdvice(row, r.advice || []); return; }
+    } catch (e) {
+      if (e.status === 401) return;
+      if (e.status === 409 && e.data && typeof e.data.received === 'number') { offset = e.data.received; continue; }   // resume where the TV is
+      if (e.status && e.status < 500 && e.status !== 0 && e.status !== 400) { finish(row, e.message, 'bad'); pct.textContent = 'Stopped'; return; }
+      if (++retries > 6) { finish(row, 'Gave up: ' + e.message + '. Choose the file again to resume.', 'bad'); pct.textContent = 'Stopped'; return; }
+      meta.textContent = 'Connection problem, retrying (' + retries + ')...'; await new Promise(r => setTimeout(r, 1500 * retries));
+      try { offset = (await api('/api/upload/status?channel=' + enc(channel) + '&name=' + enc(f.name))).received || 0; } catch (e2) {}
+    }
+  }
+}
+
+function showAdvice(row, items) {
+  const ul = row.querySelector('.adv'); ul.innerHTML = '';
+  for (const a of items) { const li = document.createElement('li'); li.className = a.level; li.textContent = a.text; ul.appendChild(li); }
+}
+
+if (token) load().catch(() => showLogin());
+</script>
+</body>
+</html>
