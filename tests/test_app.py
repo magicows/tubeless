@@ -325,3 +325,31 @@ def test_imports_an_older_installs_settings(tmp_path):
         assert r.state["channel"] == "2.nights" and r.state["mode"] == "play"        # an existing TV doesn't get the wizard
     finally:
         r.stop()
+
+
+# --- first run: the player may not be ready for the wizard's overlay yet -------------------
+def test_the_wizard_still_appears_if_the_player_is_not_ready_at_first(tmp_path):
+    from tubeless.player import FakePlayer
+
+    class SlowStarter(FakePlayer):
+        """Refuses overlays for the first second, like mpv before its IPC socket exists."""
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.ready_at = time.time() + 1.0
+
+        def set_overlay(self, raw, w, h):
+            if time.time() < self.ready_at:
+                raise FileNotFoundError(2, "No such file or directory")
+            super().set_overlay(raw, w, h)
+
+    r = Rig(tmp_path, fresh=True, start=False)
+    r.player = SlowStarter(r.cfg.short_static, r.cfg.long_static, duration_of=lambda p: 1000.0)
+    r.app.player = r.player
+    r.app.tracker_every = 0.05
+    r.app.start_background()
+    try:
+        assert r.state["mode"] == "calibrate"
+        assert r.player.overlay is None                                     # not shown at first ...
+        assert wait_for(lambda: r.player.overlay is not None, timeout=5)    # ... but it does appear once the player is ready
+    finally:
+        r.stop()

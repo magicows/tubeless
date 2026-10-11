@@ -87,6 +87,7 @@ class App:
         self._standby_paused = False
         self._switch_timer: Optional[threading.Timer] = None
         self._waking = False
+        self._overlay_pending = None          # an overlay the player wasn't ready to show yet (retried by the tracker)
         self._posted_deadline: Optional[float] = None
         self._next_tick = 0.0
         self.m3u_path = str(self.store.path("playlist.m3u"))
@@ -119,10 +120,19 @@ class App:
         raw, w, h = render.to_panel_bgra(image, self.hw)
         try:
             self.player.set_overlay(raw, w, h)
+            self._overlay_pending = None
         except Exception as e:
-            log.warning("could not show overlay: %s", e)
+            # Typically right after start-up: the player isn't accepting commands yet. Keep it and retry.
+            self._overlay_pending = image
+            log.info("overlay not shown yet (%s); will retry", e)
+
+    def _retry_overlay(self) -> None:
+        image = self._overlay_pending
+        if image is not None:
+            self._set_overlay(image)
 
     def _clear_overlay(self) -> None:
+        self._overlay_pending = None
         try:
             self.player.clear_overlay()
         except Exception as e:
@@ -702,8 +712,10 @@ class App:
     #  Tracker: where are we in the episode?
     # ─────────────────────────────────────────
     def _tracker_loop(self) -> None:
-        while not self.stop_event.wait(min(self.tracker_every, 1.0) if self._pending_resume else self.tracker_every):
+        while not self.stop_event.wait(min(self.tracker_every, 1.0) if (self._pending_resume or self._overlay_pending)
+                                       else self.tracker_every):
             try:
+                self._retry_overlay()
                 self._track()
             except Exception:
                 log.exception("tracker error")

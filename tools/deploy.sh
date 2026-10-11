@@ -7,7 +7,7 @@ HOST="${1:?usage: tools/deploy.sh <ssh-host>}"
 cd "$(dirname "$0")/.."
 APPDIR='$HOME/tubeless'
 echo "==> copying code to $HOST"
-rsync -a --delete --exclude .venv --exclude snapshots --exclude .git --exclude legacy --exclude sim_data \
+rsync -a --delete --exclude '.venv*' --exclude snapshots --exclude .git --exclude legacy --exclude sim_data \
       --exclude __pycache__ --exclude .pytest_cache --exclude tests --exclude '*.pyc' ./ "$HOST:tubeless/"
 echo "==> installing / refreshing the services"
 ssh -o BatchMode=yes "$HOST" 'set -e
