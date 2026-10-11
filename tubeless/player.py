@@ -146,6 +146,10 @@ class MpvPlayer:
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
+    def finished_normally(self) -> bool:
+        """mpv exits with status 0 when the playlist plays through; a crash or a kill gives something else."""
+        return self.proc is not None and self.proc.poll() == 0
+
     def command(self, *args):
         return self.ipc.command(*args)
 
@@ -189,6 +193,7 @@ class FakePlayer:
         self.paused = False
         self._last = clock()
         self._alive = False
+        self._ended = False                           # the playlist played through (as opposed to being stopped)
         self.overlay: Optional[tuple] = None          # (raw bgra bytes, w, h)
         self.commands: List[tuple] = []               # everything the app asked for (tests look at this)
 
@@ -208,6 +213,7 @@ class FakePlayer:
                 self.time_pos -= self._dur(self.playlist[self.pos])
                 if self.pos + 1 >= len(self.playlist):
                     self._alive = False                 # like mpv: it quits when the playlist ends
+                    self._ended = True
                     self.time_pos = self._dur(self.playlist[self.pos])
                     break
                 self.pos += 1
@@ -218,6 +224,7 @@ class FakePlayer:
         with self._lock:
             self._load(playlist_path)
             self._alive = True
+            self._ended = False
             self.paused = False
             self._last = self.clock()
 
@@ -232,11 +239,17 @@ class FakePlayer:
     def stop(self) -> None:
         with self._lock:
             self._alive = False
+            self._ended = False
 
     def alive(self) -> bool:
         with self._lock:
             self._tick()
             return self._alive
+
+    def finished_normally(self) -> bool:
+        with self._lock:
+            self._tick()
+            return self._ended and not self._alive
 
     def get(self, prop: str):
         with self._lock:

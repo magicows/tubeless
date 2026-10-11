@@ -75,11 +75,26 @@ python -m tubeless config show
 The boot-screen greeting, folders and static clips are settings too (`config show` lists them). A web page for this,
 for people who'd rather not use SSH, is on the [roadmap](docs/ROADMAP.md).
 
-## Running on a TV
+## Install on a fresh Pi
 
-For now: `tools/deploy.sh <ssh-host>` copies the code to a Pi that already has the display working,
-installs the services and starts it. A proper installer (and later a flashable image) is on the
-[roadmap](docs/ROADMAP.md).
+You need the build from the guide (see Credits): a Pi Zero 2 W with the Waveshare 2.8" DPI LCD, the speaker and the wiring.
+
+1. Flash **Raspberry Pi OS Lite (32-bit)** with the Raspberry Pi Imager. In its settings give it a hostname, a user,
+   your Wi-Fi (and Wi-Fi country), and **enable SSH**, ideally with your public key.
+2. Put the Tubeless folder on the Pi (`git clone`, or copy it) and run:
+
+   ```
+   sudo sh install.sh --name "Living Room"
+   ```
+
+   (`--dry-run` first if you want to see what it will do.) It checks the SD card by writing and reading back data, installs
+   the packages, fetches Waveshare's display overlays and **verifies each file against a known checksum**, edits
+   `config.txt` and `cmdline.txt` (showing a diff and keeping backups), installs the services, and adds a narrow `sudo` rule
+   that lets the TV power itself off and restart itself and nothing else. It is safe to run again.
+3. Put videos in `~/videos`, one folder per channel (`1.cartoons`, `2.movies`, ...), then `sudo reboot`. The first start
+   walks you through calibrating the touch screen.
+
+To update a TV from your computer later: `tools/deploy.sh <ssh-host>`. More in [docs/](docs/).
 
 ## Credits
 

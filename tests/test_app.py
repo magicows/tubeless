@@ -163,8 +163,8 @@ def test_a_finished_playlist_starts_a_new_cycle(tmp_path):
     r = Rig(tmp_path, channels={"1.short": ["a.mp4", "b.mp4"]}, duration=lambda p: 0.3)
     try:
         cycle0 = r.app.plan.cycle
-        assert wait_for(lambda: r.app.plan.cycle > cycle0, timeout=8)       # played through, reshuffled, restarted
-        assert r.player.alive()
+        assert wait_for(lambda: r.app.plan.cycle > cycle0, timeout=8)       # played through, reshuffled ...
+        assert wait_for(lambda: r.player.alive(), timeout=3)                # ... and restarted (the plan is updated just before the player)
     finally:
         r.stop()
 

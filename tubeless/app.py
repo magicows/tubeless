@@ -689,7 +689,9 @@ class App:
                     if time.time() - last_restart < self.min_restart_gap:
                         continue
                     pos, count = self._last_pos
-                    finished = pos is not None and count is not None and pos >= count - 2
+                    # The player knows whether the playlist played through (exit status 0); fall back to where we last saw it.
+                    finished = bool(getattr(self.player, "finished_normally", lambda: False)()) or (
+                        pos is not None and count is not None and pos >= count - 2)
                     log.info("player is not running (%s) - restarting", "playlist finished" if finished else "crashed")
                     if finished:
                         self.finish_cycle()
