@@ -31,11 +31,14 @@
 - [x] Boot screen packaged, with name and greeting from config
 - [x] Own static clips, bundled fonts, atomic state files
 - [x] Systemd unit templates, `tools/deploy.sh`, rollback script
+- [x] **Installer** (`sudo sh install.sh`): SD-card read-back test, lean package install, Waveshare overlays fetched at install time
+  and checked against pinned SHA-256s, `config.txt`/`cmdline.txt` edits with diff + backups, console + pigpiod, services, a narrow
+  sudoers rule; idempotent, `--dry-run`. Run end to end on the Trixie trial TV (a from-blank-card run is still to do)
+- [x] Trial of Debian 13 (Trixie): 24/24 on-TV checks
 
 ## Next
 
-1. **Installer** for stock Raspberry Pi OS Lite (Bullseye): packages, Waveshare overlays (downloaded from Waveshare at
-   install time, not redistributed), `config.txt`/`cmdline.txt`/console changes, units, config. Idempotent and re-runnable.
+1. **Friendly empty states**: no videos yet (or no channels) should show a message on the TV, not restart-loop.
 2. **Library index**: scan new files, record durations (mediainfo), keep it fresh when files appear.
 3. **Web companion** (small, streaming, low-memory): TV name (today: `python -m tubeless config set name ...`), channel management, settings, status/logs.
 4. **Transfer mode**: menu toggle, fixed info screen with URL and QR code, resumable chunked uploads written to a `.part`
