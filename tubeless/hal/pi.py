@@ -5,6 +5,7 @@ import fcntl
 import logging
 import mmap
 import select
+import shutil
 import struct
 import subprocess
 import time
@@ -18,6 +19,19 @@ log = logging.getLogger(__name__)
 
 FB_DEV = "/dev/fb0"
 FB_SYS = "/sys/class/graphics/fb0"
+
+
+def gpio_set(pin: int, *args: str) -> bool:
+    """
+    Set a pin's function/level with whichever tool the OS has: `pinctrl` (newer Raspberry Pi OS) or
+    `raspi-gpio` (older). e.g. gpio_set(19, "a5") or gpio_set(18, "op", "dh"). False if neither exists.
+    """
+    for tool in ("pinctrl", "raspi-gpio"):
+        if shutil.which(tool):
+            subprocess.run([tool, "set", str(pin), *args], check=True)
+            return True
+    log.warning("neither pinctrl nor raspi-gpio is installed; could not set GPIO %d", pin)
+    return False
 
 
 class EvdevTouch:
@@ -170,12 +184,25 @@ class PigpioBacklight:
         if self.pi is not None:
             self.pi.set_PWM_dutycycle(self.hw.backlight_pin, round(percent * 255 / 100))
         else:
-            level = "dh" if percent > 0 else "dl"
             try:
-                subprocess.run(["raspi-gpio", "set", str(self.hw.backlight_pin), "op", level], check=True)
+                gpio_set(self.hw.backlight_pin, "op", "dh" if percent > 0 else "dl")
             except Exception as e:
                 log.warning("could not set the backlight pin: %s", e)
         log.info("backlight -> %d%%", percent)
+
+
+class PiAudio:
+    """The speaker amp is fed by PWM audio on GPIO 19: make sure the pin is in that mode."""
+
+    def __init__(self, hw):
+        self.hw = hw
+
+    def start(self) -> None:
+        try:
+            if gpio_set(self.hw.audio_pin, "a5"):
+                log.info("audio PWM pin GPIO %d set", self.hw.audio_pin)
+        except Exception as e:
+            log.warning("could not set the audio pin: %s", e)
 
 
 class Framebuffer:
@@ -216,7 +243,7 @@ class PiPower:
 
 
 def make(cfg, hw) -> Backend:
-    backend = Backend(touch=EvdevTouch(hw), backlight=PigpioBacklight(hw), power=PiPower(cfg))
+    backend = Backend(touch=EvdevTouch(hw), backlight=PigpioBacklight(hw), power=PiPower(cfg), audio=PiAudio(hw))
     try:
         backend.display = Framebuffer(hw)
     except Exception as e:                      # the boot screen is optional

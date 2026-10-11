@@ -1,7 +1,16 @@
-# Bookworm trial (spare TV)
+# OS trial on a spare TV (Bookworm / Trixie)
 
 Goal: find out, on a spare TV, whether a current Raspberry Pi OS Lite is a clean home for Tubeless, *without* risking
 the working TV. Nothing here changes the TV that runs Tubeless today.
+
+> **Note (2026-10):** the Imager's current default is **Debian 13 "Trixie"** (kernel 6.18, Python 3.13, mpv 0.40,
+> `pinctrl` instead of `raspi-gpio`, NetworkManager), not Bookworm. That is a bigger jump from the working TV
+> (Bullseye, kernel 6.1) than planned, and also the OS a new builder would get today, so it is what we test.
+
+> **sudo:** images made by recent Imager versions ask for a password on `sudo`. The trial needs passwordless sudo
+> (`/etc/sudoers.d/010_<user>-nopasswd`, the long-time Raspberry Pi OS default). Claude cannot type passwords or change
+> security settings, so you add that line yourself, once. The real installer will add a much narrower rule
+> (just `systemctl poweroff`/`reboot`/`restart tubeless`).
 
 ## 1. Flash the SD card
 
@@ -41,13 +50,17 @@ It reports the OS release, kernel, Python/Pillow/numpy/mpv versions available fr
 
 ## 4. What the trial then tries (Claude does this over SSH)
 
+All of steps 1-4 are `sudo sh tools/trial/setup.sh <dir-with-overlays>`, which is built from tested pieces
+(`tubeless.installer` shows a diff of the boot-file changes, keeps backups and is safe to repeat):
+
 1. Install dependencies: `mpv python3-evdev python3-psutil python3-pil python3-numpy pigpio python3-pigpio`.
-2. Waveshare overlays: download `28DPI-DTBO.zip` from Waveshare's wiki and copy the `.dtbo` files to
-   `/boot/firmware/overlays/`. (On a Zero 2 W Waveshare also lists `vc4-kms-DPI-28inch.dtbo` for "grey shows as green".)
-3. `config.txt` (in `/boot/firmware/`): the lines from Waveshare's page, plus `dtoverlay=audremap,pins_18_19`.
-   `cmdline.txt`: `video=DPI-1:480x640M@60,rotate=90`, `consoleblank=0 logo.nologo quiet vt.global_cursor_default=0`.
-4. Mask `getty@tty1`, enable `pigpiod`, deploy Tubeless with `tools/deploy.sh`, copy a few test videos.
-5. Run the on-TV end-to-end test (`tools/e2e_pi.py`).
+2. Waveshare overlays: for the trial we reuse the exact `.dtbo` files from the working TV (so only the OS differs).
+   (On a Zero 2 W Waveshare also lists `vc4-kms-DPI-28inch.dtbo` for "grey shows as green"; try it if colours look wrong.)
+3. `config.txt` (in `/boot/firmware/`): Waveshare's overlay lines plus `dtoverlay=audremap,pins_18_19`.
+   `cmdline.txt`: `video=DPI-1:480x640@60,rotate=90`, `consoleblank=0 logo.nologo vt.global_cursor_default=0`, console to tty3.
+4. Mask `getty@tty1`, enable `pigpiod`. Reboot.
+5. Deploy Tubeless with `tools/deploy.sh <host>`, copy a few test videos, run the unit tests on the TV and the
+   on-TV end-to-end test (`tools/e2e_pi.py`).
 
 ## 5. What we are looking for
 

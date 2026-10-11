@@ -63,6 +63,11 @@ class SimPower:
         self.reboot_requested = True
 
 
+class SimAudio:
+    def start(self) -> None:
+        pass
+
+
 class SimDisplay:
     """Holds the last frame drawn straight to the 'framebuffer' (the boot screen), as RGB565 landscape."""
 
@@ -76,4 +81,4 @@ class SimDisplay:
 
 
 def make(cfg, hw) -> Backend:
-    return Backend(touch=SimTouch(), backlight=SimBacklight(), power=SimPower(), display=SimDisplay())
+    return Backend(touch=SimTouch(), backlight=SimBacklight(), power=SimPower(), display=SimDisplay(), audio=SimAudio())

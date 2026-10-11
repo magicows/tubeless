@@ -26,6 +26,7 @@ class Backend:
     backlight: object
     power: object
     display: object = None
+    audio: object = None
 
 
 def make_backend(cfg, hw, sim: bool = False) -> Backend:

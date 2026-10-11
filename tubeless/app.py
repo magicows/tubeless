@@ -42,6 +42,7 @@ class App:
                  store: Optional[Store] = None, rng: Optional[random.Random] = None, tick_every: float = 5.0):
         self.cfg, self.hw = cfg, hw
         self.touch, self.backlight, self.power = backend.touch, backend.backlight, backend.power
+        self.audio = getattr(backend, "audio", None)
         self.player = player
         self.store = store or Store(cfg.data)
         self.settings = Settings(self.store, expand(cfg.legacy_state_file))
@@ -141,6 +142,8 @@ class App:
     #  Start / stop
     # ─────────────────────────────────────────
     def startup(self) -> None:
+        if self.audio is not None:
+            self.audio.start()
         self.backlight.start()
         self.backlight.set(self.brightness)
         channels = self.channels()
