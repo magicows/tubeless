@@ -351,6 +351,10 @@ class Context:
     def say(self, text: str) -> None:
         self.runner.say(text)
 
+    def did(self, past: str, would: str) -> str:
+        """Past tense normally, 'would ...' in a dry run, so the log never claims something that was not done."""
+        return would if self.dry_run else past
+
 
 def _chown_tree(path: Path, user: str) -> None:
     info = pwd.getpwnam(user)
@@ -450,14 +454,14 @@ def step_console(ctx: Context) -> None:
         ctx.say("      login prompt on the panel already masked")
     else:
         ctx.runner.run("systemctl", "mask", "getty@tty1.service")
-        ctx.say("      login prompt on the panel masked (the screen shows only Tubeless)")
+        ctx.say("      " + ctx.did("login prompt on the panel masked (the screen shows only Tubeless)", "would mask the login prompt on the panel"))
     if ctx.runner.query("systemctl", "cat", "pigpiod.service").returncode != 0:
         ctx.say("      !! no pigpiod.service on this system: the backlight will be on/off only")
     elif _unit_state(ctx, "pigpiod.service") == "enabled":
         ctx.say("      pigpiod already enabled")
     else:
         ctx.runner.run("systemctl", "enable", "pigpiod.service")
-        ctx.say("      pigpiod enabled (dims the backlight)")
+        ctx.say("      " + ctx.did("pigpiod enabled (dims the backlight)", "would enable pigpiod (dims the backlight)"))
 
 
 IGNORE_WHEN_COPYING = shutil.ignore_patterns("__pycache__", "*.pyc", ".git", ".venv*", "snapshots", "sim_data",
@@ -491,7 +495,7 @@ def step_app(ctx: Context) -> None:
         ctx.runner.write(cfg, default_config(ctx.name), owner=ctx.user)
         if not ctx.dry_run:
             _chown_tree(cfg.parent, ctx.user)
-        ctx.say(f"      config created: {cfg}  (name: {ctx.name})")
+        ctx.say("      " + ctx.did(f"config created: {cfg}  (name: {ctx.name})", f"would create {cfg}  (name: {ctx.name})"))
     videos = ctx.home / "videos"
     if videos.exists():
         ctx.say(f"      videos folder exists: {videos}")
@@ -500,7 +504,7 @@ def step_app(ctx: Context) -> None:
     else:
         videos.mkdir(parents=True)
         _chown_tree(videos, ctx.user)
-        ctx.say(f"      created {videos}: put one folder per channel in it, each with some videos")
+        ctx.say("      " + ctx.did(f"created {videos}: put one folder per channel in it, each with some videos", f"would create {videos}"))
 
 
 def step_services(ctx: Context) -> None:
@@ -516,7 +520,7 @@ def step_services(ctx: Context) -> None:
             ctx.say(f"      {unit} already up to date")
         else:
             ctx.runner.write(target, text)
-            ctx.say(f"      {unit} written")
+            ctx.say("      " + ctx.did(f"{unit} written", f"would write {unit}"))
     ctx.runner.run("systemctl", "daemon-reload")
     ctx.runner.run("systemctl", "enable", *UNITS)
 
@@ -533,7 +537,8 @@ def step_services(ctx: Context) -> None:
             if check.returncode != 0:
                 raise InstallError("the generated sudoers rule did not validate (visudo): " + check.stdout + check.stderr)
         ctx.runner.write(sudoers, rule, mode=0o440)
-        ctx.say("      sudoers rule installed (power off / reboot / restart Tubeless only)")
+        ctx.say("      " + ctx.did("sudoers rule installed (power off / reboot / restart Tubeless only)",
+                                 "would install a sudoers rule (power off / reboot / restart Tubeless only)"))
 
 
 STEPS: List[Tuple[str, Callable[[Context], None]]] = [
