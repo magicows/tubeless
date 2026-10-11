@@ -89,3 +89,20 @@ The result decides whether the installer targets Bullseye only, or both.
 * **Installing `mpv` pulls in ~280 packages by default** (X11 utilities, speech models ...) and ran a 512 MB Pi out of
   memory. Use `--no-install-recommends` (about 183 packages, still large: mpv's video libraries).
 * **`sudo` asks for a password** on images made by recent Imager versions (see the note at the top).
+
+### Recovering after a flaky card (what worked)
+
+Once the card reads back correctly (re-seating the card fixed ours), the damage already done still has to be undone:
+
+1. Make the next boot run a full filesystem check (`fsck.mode=force` on the end of `/boot/firmware/cmdline.txt`; on this
+   OS the check happens in the early-boot stage, which is the flickering activity light). Then **remove the flag**, or every
+   boot repeats it. Our check removed one damaged entry ("Structure needs cleaning").
+2. `sudo apt-get install debsums && sudo debsums -s`: lists every installed file whose checksum does not match its
+   package, and packages whose checksum record was lost. In our case all of it was confined to the packages installed
+   while the card was misbehaving; the original system was fine (only a config file the OS edits itself differed).
+3. Reinstall exactly those packages: `sudo apt-get install --reinstall --no-install-recommends <packages>`. If apt refuses
+   one that is half-configured (`Internal Error, No file name for ...`, which aborts the whole run), fetch it with
+   `apt-get download <pkg>` and install it with `sudo dpkg -i`.
+4. Re-run `sudo debsums -s` and `sudo dpkg --audit` until both are quiet.
+
+If the original system is damaged too, re-flash instead. It is quicker than chasing it.
