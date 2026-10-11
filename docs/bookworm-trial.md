@@ -74,3 +74,18 @@ All of steps 1-4 are `sudo sh tools/trial/setup.sh <dir-with-overlays>`, which i
 | Does NetworkManager (default on Bookworm) make the Wi-Fi hotspot setup easy? | the first-boot flow |
 
 The result decides whether the installer targets Bullseye only, or both.
+
+## Things that went wrong on the first attempt (and what they taught us)
+
+* **A failing SD card.** `Unable to fetch` / "compressed data is corrupt" / "unexpected end of file" during `apt install`,
+  plus `sdhost ... timeout waiting for hardware interrupt` in `dmesg`. A write-then-read-back test (120 MB, three times)
+  returned different data every time, while the RAM and the power (`vcgencmd get_throttled` = `0x0`) were fine. The Imager's
+  own verify step does not catch this. `setup.sh` now runs that check first and stops. Fix: re-seat the card, and if it
+  persists use a genuine card from a reputable seller (`f3` can test a card for fake capacity).
+* **An unreachable package mirror.** `raspbian.raspberrypi.com` redirects downloads to a university mirror; if that one is
+  unreachable from your network you get `Unable to connect to mirror0.it.ox.ac.uk`. Pointing `URIs:` in
+  `/etc/apt/sources.list.d/raspbian.sources` at another mirror (e.g. `http://archive.raspbian.org/raspbian/`) fixes it;
+  signatures are still verified.
+* **Installing `mpv` pulls in ~280 packages by default** (X11 utilities, speech models ...) and ran a 512 MB Pi out of
+  memory. Use `--no-install-recommends` (about 183 packages, still large: mpv's video libraries).
+* **`sudo` asks for a password** on images made by recent Imager versions (see the note at the top).
