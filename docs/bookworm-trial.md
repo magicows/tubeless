@@ -106,3 +106,22 @@ Once the card reads back correctly (re-seating the card fixed ours), the damage 
 4. Re-run `sudo debsums -s` and `sudo dpkg --audit` until both are quiet.
 
 If the original system is damaged too, re-flash instead. It is quicker than chasing it.
+
+## Result (2026-10-11): Debian 13 "Trixie" works
+
+Raspberry Pi OS Lite 32-bit, kernel 6.18, Python 3.13, mpv 0.40, Pillow 11, numpy 2.2, pigpio 1.78, NetworkManager.
+
+| Question | Answer |
+|---|---|
+| Do the Waveshare overlays bring up the panel and touch on the newer kernel? | **Yes**, with the same `.dtbo` files as the Bullseye TV. `DPI-1` connected at 480x640, `fb0` 480x640 16 bpp, Goodix found (its name is now `11-005d Goodix Capacitive TouchScreen`; matching on "Goodix" still works). |
+| Does mpv (newer) give the same picture, rotation and `overlay-add` menus? | **Yes.** mpv 0.40 picks the GPU renderer on the DRM display by itself (Bullseye's 0.32 fell back to SDL). `--video-rotate=270` and menu overlays work. |
+| Do `pigpio` and a PWM backlight still work? | **Yes** (`pigpiod.service` ships with the package; duty 255 / 64 / 255 measured). |
+| Are Pillow/numpy versions fine? | **Yes.** All tests pass on Python 3.9 / numpy 1.19 / Pillow 8.1 and on 3.13 / numpy 2 / Pillow 11-12. |
+| Is `raspi-gpio` still there? | **No**, only `pinctrl`. The app now uses whichever exists. |
+| Hardware test | `tools/e2e_pi.py`: 24/24; unit tests 97/97 on the TV. First-run calibration done by hand on the real touchscreen (error 10 px). |
+| Boot | `tubeless-boot` ran (about 23 s on screen), `tubeless` autostarted. 47 s overall, but ~25 s of that is NetworkManager, which we don't wait for. |
+
+Differences to remember for the installer: `/boot/firmware/`, `pinctrl`, NetworkManager (good for the Wi-Fi hotspot), cloud-init user-data from
+the Imager, passwordless `sudo` is not the default, and `mpv` is ~180 packages even without recommends.
+
+Found along the way: the first-run wizard overlay was lost if mpv's socket was not ready yet (fixed: it is retried).

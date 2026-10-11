@@ -14,8 +14,9 @@
 * **Upload advice, not conversion.** The upload page checks resolution/codec/bitrate and recommends; the user can override.
 * **Updates** come from GitHub releases (a menu item, later).
 * **Distribution: both.** An idempotent installer script is the source of truth; a flashable image is built from it by CI.
-* **OS:** ship v1 on what is proven (Bullseye Lite 32-bit, kernel 6.1). Trial Bookworm on a spare TV in parallel
-  ([docs/bookworm-trial.md](bookworm-trial.md)) and move only if it is clean.
+* **OS:** the trial on a spare TV showed that current Raspberry Pi OS Lite (Debian 13 "Trixie", kernel 6.18) works
+  ([docs/bookworm-trial.md](bookworm-trial.md)): 24/24 on-TV checks. Bullseye stays supported while the installer is built;
+  Trixie becomes the default for new builds and for the image once the installer has been run end to end on it.
 * **Name:** *Tubeless* (a TV with no tube). Each TV has its own display name in `config.json` (the author's is "SimpTV").
   The Simpsons theming stays a user-supplied theme: no media is ever shipped.
 
