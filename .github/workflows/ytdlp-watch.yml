@@ -30,7 +30,7 @@ jobs:
       - name: Run the YouTube tests against it
         id: tests
         run: python -m pytest -q tests/test_ytdlp_contract.py tests/test_youtube.py tests/test_streaming.py tests/test_companion.py
-      - name: Can it still read a public playlist? (informational: GitHub's servers are sometimes blocked by YouTube)
+      - name: "Can it still read a public playlist? (informational, since YouTube sometimes blocks GitHub servers)"
         continue-on-error: true
         run: python -m yt_dlp --no-update --flat-playlist -J "https://www.youtube.com/playlist?list=PLa1F2ddGya_8NhFM-rx_xh5SlIGbHyrZZ" | head -c 300
       - name: Open an issue if the tests failed
