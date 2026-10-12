@@ -130,6 +130,10 @@ def _icon(img, d, kind, cx, cy, color):
         P((0, -12), (-8, -3), (8, -3))
         R(-3, -3, 3, 5)
         L([(-10, 4), (-10, 10), (10, 10), (10, 4)], 2)
+    elif kind == "wifi":
+        for r in (5, 9, 13):
+            d.arc((_s(cx - r), _s(cy + 8 - r), _s(cx + r), _s(cy + 8 + r)), 230, 310, fill=color, width=_s(2.5))
+        d.ellipse((_s(cx - 2), _s(cy + 6), _s(cx + 2), _s(cy + 10)), fill=color)
     elif kind == "reshuffle":
         d.arc((_s(cx - 9), _s(cy - 9), _s(cx + 9), _s(cy + 9)), 40, 330, fill=color, width=_s(3))
         P((6, -12), (13, -4), (3, -3))
@@ -357,6 +361,20 @@ def render_empty(hw: Hardware, name: str, folder: str, notice: str = "") -> Imag
     return img
 
 
+def _draw_qr(d, qr: Sequence[Sequence[bool]], left: int, top: int, size: int) -> int:
+    """Dark-on-light QR code with its quiet zone, at most `size` pixels square. Returns the side length drawn."""
+    n = len(qr)
+    scale = max(2, size // (n + 4))
+    side = scale * (n + 4)
+    d.rectangle((left, top, left + side, top + side), fill=(255, 255, 255, 255))
+    for r, row in enumerate(qr):
+        for c, dark in enumerate(row):
+            if dark:
+                px, py = left + (c + 2) * scale, top + (r + 2) * scale
+                d.rectangle((px, py, px + scale - 1, py + scale - 1), fill=(0, 0, 0, 255))
+    return side
+
+
 def render_transfer(hw: Hardware, name: str, urls: Sequence[str], pin: str, qr: Optional[Sequence[Sequence[bool]]],
                     status: Sequence[str], progress: Optional[float] = None) -> Image.Image:
     img, d = _blank(hw)
@@ -369,15 +387,7 @@ def render_transfer(hw: Hardware, name: str, urls: Sequence[str], pin: str, qr: 
     top = y0 + 92
     size = 176
     if qr:
-        n = len(qr)
-        scale = max(2, size // (n + 4))
-        side = scale * (n + 4)
-        d.rectangle((left, top, left + side, top + side), fill=(255, 255, 255, 255))      # dark-on-light, quiet zone included
-        for r, row in enumerate(qr):
-            for c, dark in enumerate(row):
-                if dark:
-                    px, py = left + (c + 2) * scale, top + (r + 2) * scale
-                    d.rectangle((px, py, px + scale - 1, py + scale - 1), fill=(0, 0, 0, 255))
+        side = _draw_qr(d, qr, left, top, size)
         text_x = left + side + 22
     else:
         text_x = left
@@ -402,4 +412,41 @@ def render_transfer(hw: Hardware, name: str, urls: Sequence[str], pin: str, qr: 
         if w > 0:
             d.rectangle((left + 2, by0 + 2, left + 2 + w, by1 - 2), fill=MATRIX)
     d.text((x0 + 24, y1 - 22), "HOLD the screen to finish and go back to the TV", font=fonts.load(fonts.MONO, 14), fill=MATRIX_DIM)
+    return img
+
+
+def render_setup(hw: Hardware, name: str, ssid: str, password: str, qr: Optional[Sequence[Sequence[bool]]],
+                 address: str, status: Sequence[str]) -> Image.Image:
+    """Wi-Fi setup: join the TV's hotspot, then pick your own network on the page that opens."""
+    img, d = _blank(hw)
+    x0, y0, x1, y1 = hw.safe_rect
+    left = x0 + 24
+    d.rectangle(hw.safe_rect, outline=(0, 55, 20, 255), width=1)
+    d.text((left, y0 + 14), fit_text(d, name.upper(), fonts.load(fonts.MONO_BOLD, 18), 300), font=fonts.load(fonts.MONO_BOLD, 18), fill=MATRIX_DIM)
+    d.text((left, y0 + 40), "WI-FI SETUP", font=fonts.load(fonts.MONO_BOLD, 32), fill=MATRIX)
+    top, size = y0 + 92, 168
+    if qr:
+        side = _draw_qr(d, qr, left, top, size)
+        text_x = left + side + 22
+    else:
+        side, text_x = 0, left
+    mono, bold = fonts.load(fonts.MONO, 15), fonts.load(fonts.MONO_BOLD, 17)
+    y = top
+    d.text((text_x, y), "1. Join this Wi-Fi" + (" (scan me)" if qr else ""), font=mono, fill=MATRIX_MID)
+    y += 22
+    d.text((text_x, y), fit_text(d, ssid, bold, x1 - 12 - text_x), font=bold, fill=MATRIX)
+    y += 24
+    d.text((text_x, y), "password", font=mono, fill=MATRIX_DIM)
+    d.text((text_x + 84, y - 2), password, font=fonts.load(fonts.MONO_BOLD, 22), fill=(220, 255, 230, 255))
+    y += 38
+    d.text((text_x, y), "2. Pick your network on the", font=mono, fill=MATRIX_MID)
+    y += 20
+    d.text((text_x, y), "page that opens, or visit", font=mono, fill=MATRIX_MID)
+    y += 22
+    d.text((text_x, y), address, font=bold, fill=MATRIX)
+    sy = max(top + side + 14, y + 34)
+    for line in status[:3]:
+        d.text((left, sy), fit_text(d, line, fonts.load(fonts.MONO, 16), x1 - 24 - left), font=fonts.load(fonts.MONO, 16), fill=MATRIX_MID)
+        sy += 22
+    d.text((x0 + 24, y1 - 22), "HOLD the screen to cancel", font=fonts.load(fonts.MONO, 14), fill=MATRIX_DIM)
     return img

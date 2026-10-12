@@ -3,7 +3,7 @@ The menu as data: what rows exist on each page, and what selecting one means.
 Pure logic; drawing is in render.py and doing is in app.py.
 
     main:      Pause/Play, Next video, Previous video, Brightness, Settings >, then the channels
-    settings:  < Back, Shuffle, Reshuffle channel, Sleep timer, Auto-dim, Calibrate touch, Shut down
+    settings:  < Back, Shuffle, Reshuffle channel, Sleep timer, Auto-dim, Calibrate touch, Upload videos, Wi-Fi setup, Shut down
 """
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ class MenuContext:
     sleep_timer_min: int = 0
     auto_dim_min: int = 0
     confirm_shutdown: bool = False
+    wifi_setup: bool = False                  # offered only where the OS can do it (NetworkManager)
 
 
 def _minutes(m: int) -> str:
@@ -53,7 +54,7 @@ class MenuModel:
 
     def items(self, ctx: MenuContext) -> List[Item]:
         if self.page == "settings":
-            return [
+            rows = [
                 Item("back", "Back", ("page", "main")),
                 Item("shuffle", "Shuffle", ("shuffle",), "ON" if ctx.shuffle else "OFF"),
                 Item("reshuffle", "Reshuffle channel", ("reshuffle",)),
@@ -61,8 +62,11 @@ class MenuModel:
                 Item("sun", "Auto-dim", ("auto_dim",), _minutes(ctx.auto_dim_min)),
                 Item("target", "Calibrate touch", ("calibrate",)),
                 Item("upload", "Upload videos", ("transfer",)),
-                Item("power", "Tap again to confirm" if ctx.confirm_shutdown else "Shut down", ("shutdown",)),
             ]
+            if ctx.wifi_setup:
+                rows.append(Item("wifi", "Wi-Fi setup", ("wifi_setup",)))
+            rows.append(Item("power", "Tap again to confirm" if ctx.confirm_shutdown else "Shut down", ("shutdown",)))
+            return rows
         rows = [
             Item("play" if ctx.paused else "pause", "Play" if ctx.paused else "Pause", ("playpause",)),
             Item("next", "Next video", ("next",)),

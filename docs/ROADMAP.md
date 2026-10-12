@@ -43,7 +43,7 @@
 3. **Web companion** (small, streaming, low-memory): TV name (today: `python -m tubeless config set name ...`), channel management, settings, status/logs.
 4. ~~**Transfer mode**~~ done (Settings > Upload videos, or the empty screen): menu toggle, fixed info screen with URL and QR code, resumable chunked uploads written to a `.part`
    file and renamed when done, disk-space check, file advice.
-5. **Setup mode**: first-boot hotspot with a QR code, captive portal, Wi-Fi country and the phone's clock/timezone.
+5. ~~**Setup mode**~~ done and verified on the trial TV (Settings > Wi-Fi setup; automatic on first boot; Trixie/Bookworm only): first-boot hotspot with a QR code, captive portal, Wi-Fi country and the phone's clock/timezone.
 6. **Updater** from GitHub releases, with rollback.
 7. **Image build** in CI from the installer.
 

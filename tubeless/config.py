@@ -49,6 +49,8 @@ class Config:
 
     # The upload page (only runs while the TV is in upload mode).
     web_port: int = 8080
+    setup_port: int = 80                  # the Wi-Fi setup page; 80 so phones' 'sign in to Wi-Fi' pop-up finds it
+    setup_auto: bool = True               # start Wi-Fi setup by itself on a TV that has never had a network
 
     # Touch feel.
     menu_timeout: float = 5.0

@@ -1,0 +1,165 @@
+#!/usr/bin/python3
+"""
+Tubeless's one root-owned helper. The TV's service runs as an ordinary user, but putting Wi-Fi into hotspot mode and
+joining a network needs NetworkManager's permission, so sudoers lets that user run THIS FILE (and nothing else).
+It is installed root-owned (/usr/local/lib/tubeless/wifi-helper), so the user cannot edit it, and it validates every
+argument itself. Passwords come in on stdin, never on the command line.
+
+    wifi-helper scan                      JSON list of nearby networks
+    wifi-helper hotspot-up SSID           WPA2 hotspot at 10.42.0.1 (password on stdin)
+    wifi-helper hotspot-down
+    wifi-helper connect SSID              join a network (password on stdin, empty for an open network)
+    wifi-helper has-saved                 prints "yes" if any Wi-Fi network has been saved, else "no"
+"""
+import json
+import re
+import subprocess
+import sys
+
+HOTSPOT = "tubeless-hotspot"
+NMCLI = "/usr/bin/nmcli"
+
+
+def run(*args, timeout=60):
+    return subprocess.run([NMCLI, *args], capture_output=True, text=True, timeout=timeout)
+
+
+def split_terse(line):
+    """nmcli -t escapes ':' and '\\' inside fields with a backslash."""
+    fields, cur, i = [], "", 0
+    while i < len(line):
+        ch = line[i]
+        if ch == "\\" and i + 1 < len(line):
+            cur += line[i + 1]
+            i += 2
+        elif ch == ":":
+            fields.append(cur)
+            cur, i = "", i + 1
+        else:
+            cur += ch
+            i += 1
+    fields.append(cur)
+    return fields
+
+
+def valid_ssid(ssid):
+    return 1 <= len(ssid.encode("utf-8", "replace")) <= 32 and not re.search(r"[\x00-\x1f\x7f]", ssid)
+
+
+def valid_psk(psk):
+    return psk == "" or 8 <= len(psk) <= 63 and all(32 <= ord(c) < 127 for c in psk) or re.fullmatch(r"[0-9a-fA-F]{64}", psk) is not None
+
+
+def wifi_device():
+    for line in run("-t", "-f", "DEVICE,TYPE", "dev").stdout.splitlines():
+        dev, _, kind = line.partition(":")
+        if kind == "wifi":
+            return dev
+    return None
+
+
+def wifi_profiles():
+    """(name, ssid) of every saved Wi-Fi profile except our own hotspot."""
+    out = []
+    for line in run("-t", "-f", "NAME,TYPE", "con", "show").stdout.splitlines():
+        name, kind = (split_terse(line) + ["", ""])[:2]
+        if kind == "802-11-wireless" and name != HOTSPOT:
+            ssid = run("-g", "802-11-wireless.ssid", "con", "show", name).stdout.strip()
+            out.append((name, ssid))
+    return out
+
+
+def cmd_scan():
+    dev = wifi_device()
+    res = run("-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "yes", *(["ifname", dev] if dev else []))
+    best = {}
+    for line in res.stdout.splitlines():
+        ssid, signal, security = (split_terse(line) + ["", "", ""])[:3]
+        if not ssid or ssid.startswith("Tubeless-"):
+            continue
+        entry = {"ssid": ssid, "signal": int(signal or 0), "secured": bool(security.strip()) and security.strip() != "--"}
+        if ssid not in best or entry["signal"] > best[ssid]["signal"]:
+            best[ssid] = entry
+    print(json.dumps(sorted(best.values(), key=lambda e: -e["signal"])))
+    return 0
+
+
+def cmd_hotspot_down():
+    run("con", "down", HOTSPOT)
+    run("con", "delete", HOTSPOT)
+    return 0
+
+
+def cmd_hotspot_up(ssid):
+    psk = sys.stdin.readline().rstrip("\n")
+    if not valid_ssid(ssid) or not psk or not valid_psk(psk):
+        print("bad hotspot name or password", file=sys.stderr)
+        return 2
+    dev = wifi_device()
+    if not dev:
+        print("no Wi-Fi device", file=sys.stderr)
+        return 3
+    cmd_hotspot_down()
+    res = run("con", "add", "type", "wifi", "ifname", dev, "con-name", HOTSPOT, "autoconnect", "no", "ssid", ssid,
+              "802-11-wireless.mode", "ap", "802-11-wireless.band", "bg", "ipv4.method", "shared",
+              "ipv4.addresses", "10.42.0.1/24", "ipv6.method", "disabled",
+              "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk)
+    if res.returncode == 0:
+        res = run("con", "up", HOTSPOT, timeout=45)
+    if res.returncode != 0:
+        print((res.stderr or res.stdout).strip(), file=sys.stderr)
+        cmd_hotspot_down()
+        return 1
+    return 0
+
+
+def cmd_connect(ssid):
+    psk = sys.stdin.readline().rstrip("\n")
+    if not valid_ssid(ssid) or not valid_psk(psk):
+        print("bad network name or password", file=sys.stderr)
+        return 2
+    dev = wifi_device()
+    if not dev:
+        print("no Wi-Fi device", file=sys.stderr)
+        return 3
+    cmd_hotspot_down()
+    name = "tubeless-" + ssid                              # our own profile; any older one stays until this one works
+    run("con", "delete", name)
+    add = ["con", "add", "type", "wifi", "ifname", dev, "con-name", name, "ssid", ssid, "connection.autoconnect", "yes"]
+    if psk:
+        add += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk]
+    res = run(*add)
+    if res.returncode == 0:
+        res = run("-w", "40", "con", "up", name, "ifname", dev, timeout=60)
+    if res.returncode != 0:
+        run("con", "delete", name)                         # a profile that doesn't work shouldn't linger
+        print((res.stderr or res.stdout).strip(), file=sys.stderr)
+        return 1
+    for other, other_ssid in wifi_profiles():              # it works: older profiles for the same network are now stale
+        if other_ssid == ssid and other != name:
+            run("con", "delete", other)
+    return 0
+
+
+def main(argv):
+    try:
+        if argv[1:2] == ["scan"] and len(argv) == 2:
+            return cmd_scan()
+        if argv[1:2] == ["hotspot-down"] and len(argv) == 2:
+            return cmd_hotspot_down()
+        if argv[1:2] == ["hotspot-up"] and len(argv) == 3:
+            return cmd_hotspot_up(argv[2])
+        if argv[1:2] == ["connect"] and len(argv) == 3:
+            return cmd_connect(argv[2])
+        if argv[1:2] == ["has-saved"] and len(argv) == 2:
+            print("yes" if wifi_profiles() else "no")
+            return 0
+    except (OSError, subprocess.SubprocessError) as e:
+        print(str(e), file=sys.stderr)
+        return 4
+    print(__doc__, file=sys.stderr)
+    return 64
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

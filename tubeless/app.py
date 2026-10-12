@@ -27,7 +27,9 @@ from .menu import AUTO_DIM_STEPS, SLEEP_TIMER_STEPS, MenuContext, MenuModel, nex
 from .pixels import image_to_565
 from .skip import skip_target
 from .state import Settings, Store
+from .setupweb import SetupServer
 from .web import Session, UploadManager, WebServer, local_ip
+from .wifi import HOTSPOT_IP, Wifi, new_hotspot_credentials, wifi_qr_text
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +45,8 @@ DIM_LEVEL = 25                # percent
 
 class App:
     def __init__(self, cfg: Config, hw: Hardware, backend, player, library: Optional[Library] = None,
-                 store: Optional[Store] = None, rng: Optional[random.Random] = None, tick_every: float = 5.0):
+                 store: Optional[Store] = None, rng: Optional[random.Random] = None, tick_every: float = 5.0,
+                 wifi: Optional[Wifi] = None):
         self.cfg, self.hw = cfg, hw
         self.touch, self.backlight, self.power = backend.touch, backend.backlight, backend.power
         self.audio = getattr(backend, "audio", None)
@@ -97,6 +100,13 @@ class App:
         self.web: Optional[WebServer] = None
         self.uploads: Optional[UploadManager] = None
         self.web_info: Optional[dict] = None   # {"pin": ..., "urls": [...]} while upload mode is on
+        self.wifi = wifi                       # None, or something that can make a hotspot and join networks
+        self.setup: Optional[dict] = None      # while Wi-Fi setup is on: ssid, password, address, status, ...
+        self._setup_server: Optional[SetupServer] = None
+        self._setup_lock = threading.Lock()
+        self._setup_gen = 0                    # bumped on every start/stop so a stale background step can tell
+        self.connect_delay = 1.5               # lets the page's answer reach the phone before the hotspot drops
+        self.online_wait = 45.0                # how long after boot we wait for Wi-Fi before offering setup
         self._notice, self._notice_until = "", 0.0
         self._screen_dirty, self._last_screen = True, 0.0
         self._posted_deadline: Optional[float] = None
@@ -185,7 +195,7 @@ class App:
             self.begin_calibration(first_run=True)            # a brand new install starts by calibrating touch
 
     def start_threads(self) -> None:
-        for target in (self._worker_loop, self._monitor_loop, self._tracker_loop):
+        for target in (self._worker_loop, self._monitor_loop, self._tracker_loop, self._watch_for_network):
             t = threading.Thread(target=target, daemon=True)
             t.start()
             self._threads.append(t)
@@ -396,7 +406,7 @@ class App:
             paused=bool(self.player.get("pause")), brightness=self.brightness, shuffle=self.shuffle,
             channels=[c.label for c in channels], current_channel=self.channel_index,
             sleep_timer_min=self.sleep_timer_min, auto_dim_min=self.auto_dim_min,
-            confirm_shutdown=time.time() < self.confirm_shutdown_until)
+            confirm_shutdown=time.time() < self.confirm_shutdown_until, wifi_setup=self.wifi_available)
 
     def render_menu(self) -> None:
         if not self.menu_open:
@@ -461,6 +471,9 @@ class App:
         elif kind == "transfer":
             self.close_menu()
             self.start_transfer()
+        elif kind == "wifi_setup":
+            self.close_menu()
+            self.start_setup()
         elif kind == "channel":
             self.close_menu()
             self.switch_channel(action[1])
@@ -573,6 +586,9 @@ class App:
             self._tick()
         elif kind == "wake":
             self._wake()
+        elif kind == "setup_auto":
+            if self.mode in ("play", "empty") and self.setup is None:
+                self.start_setup()
         elif kind == "calibration_done":
             if self.mode == "calibrate":
                 self.end_calibration("Calibrated")
@@ -586,6 +602,8 @@ class App:
             self._empty_gesture(g)
         elif self.mode == "transfer":
             self._transfer_gesture(g)
+        elif self.mode == "setup":
+            self._setup_gesture(g)
         elif self.mode != "play":
             pass                                                # standby / shutting down: ignore
         elif self.menu_open:
@@ -703,7 +721,7 @@ class App:
         last_restart = 0.0
         while not self.stop_event.wait(self.exit_check_every):
             try:
-                if self.mode in ("shutdown", "empty", "transfer"):
+                if self.mode in ("shutdown", "empty", "transfer", "setup"):
                     continue
                 if not self.player.alive():
                     if time.time() - last_restart < self.min_restart_gap:
@@ -735,7 +753,7 @@ class App:
     # ─────────────────────────────────────────
     def _tracker_loop(self) -> None:
         while not self.stop_event.wait(min(self.tracker_every, 1.0) if (self._pending_resume or self._overlay_pending
-                                                                        or self.mode == "transfer")
+                                                                        or self.mode in ("transfer", "setup"))
                                        else self.tracker_every):
             try:
                 self._retry_overlay()
@@ -784,6 +802,9 @@ class App:
         """Stop the player, start the upload page, and show its address, QR code and PIN on the TV."""
         if self.mode == "transfer":
             return
+        if self.wifi_available and not self.online():
+            self.start_setup(then_upload=True)              # an upload page is no use without a network
+            return
         self.save_progress_now()
         self._close_menu_quietly()
         self._clear_overlay()
@@ -816,6 +837,164 @@ class App:
         self.web, self.web_info = None, None
         log.info("upload page stopped")
         self._back_from_transfer()
+
+    # ─────────────────────────────────────────
+    #  Wi-Fi setup: the TV makes a hotspot, you join it and tell the TV which network to use
+    # ─────────────────────────────────────────
+    @property
+    def wifi_available(self) -> bool:
+        return self.wifi is not None and bool(getattr(self.wifi, "available", False))
+
+    def online(self) -> bool:
+        return not self.wifi_available or self.wifi.connected_ip() is not None
+
+    def _watch_for_network(self) -> None:
+        """First boot with no Wi-Fi saved at all: after a grace period, start setup by itself. A TV that has a network
+        saved but can't reach it just keeps playing; it works fine offline, and Settings has Wi-Fi setup for later."""
+        if not (self.wifi_available and self.cfg.setup_auto):
+            return
+        deadline = time.time() + self.online_wait
+        while not self.stop_event.is_set():
+            if self.wifi.connected_ip() is not None:
+                return
+            if time.time() >= deadline:
+                break
+            self.stop_event.wait(1.0)
+        else:
+            return
+        if not self.wifi.has_saved():
+            log.info("no Wi-Fi saved and not connected: starting Wi-Fi setup")
+            self.events.put(("setup_auto",))
+
+    def start_setup(self, then_upload: bool = False) -> None:
+        if not self.wifi_available or self.mode == "setup":
+            return
+        if self.mode in ("calibrate", "shutdown", "standby"):
+            return
+        self.save_progress_now()
+        self._close_menu_quietly()
+        self._clear_overlay()
+        try:
+            self.player.stop()
+        except Exception:
+            pass
+        ssid, password = new_hotspot_credentials()
+        with self._setup_lock:
+            self._setup_gen += 1
+            gen = self._setup_gen
+        self.setup = {"ssid": ssid, "password": password, "address": HOTSPOT_IP, "status": "Starting Wi-Fi setup...",
+                      "busy": False, "then_upload": then_upload, "networks": []}
+        self.mode = "setup"
+        self._screen_dirty = True
+        self._draw_screen()
+        threading.Thread(target=self._setup_bringup, args=(gen,), daemon=True).start()
+
+    def _setup_current(self, gen: int) -> bool:
+        return self.mode == "setup" and self.setup is not None and gen == self._setup_gen
+
+    def _setup_bringup(self, gen: int) -> None:
+        try:
+            nets = self.wifi.scan()                                 # before the hotspot: scanning while hosting is unreliable
+            if not self._setup_current(gen):
+                return
+            self.setup["networks"] = nets
+            ok, why = self.wifi.hotspot_up(self.setup["ssid"], self.setup["password"])
+            if not self._setup_current(gen):
+                self.wifi.hotspot_down()
+                return
+            if not ok:
+                raise RuntimeError(why or "the hotspot didn't start")
+            server = SetupServer(_SetupHooks(self), host="0.0.0.0", port=self.cfg.setup_port)
+            try:
+                server.start()
+            except OSError:
+                server = SetupServer(_SetupHooks(self), host="0.0.0.0", port=8080)       # not root, or 80 is taken
+                server.start()
+            self._setup_server = server
+            if server.port != 80:
+                self.setup["address"] = f"{HOTSPOT_IP}:{server.port}"
+            self.setup["status"] = "Waiting for you to connect..."
+        except Exception as e:
+            log.exception("could not start Wi-Fi setup")
+            if self._setup_current(gen):
+                self._leave_setup(f"Couldn't start Wi-Fi setup ({e}).")
+            return
+        self._screen_dirty = True
+
+    def _leave_setup(self, notice: str = "") -> None:
+        """Tear everything down and go back to the TV (or on to the upload page if that is what you asked for)."""
+        with self._setup_lock:
+            self._setup_gen += 1
+        server, self._setup_server = self._setup_server, None
+        if server is not None:
+            server.stop()
+        then_upload = bool(self.setup and self.setup.get("then_upload"))
+        try:
+            self.wifi.hotspot_down()
+        except Exception:
+            pass
+        self.setup = None
+        if notice:
+            self._notice, self._notice_until = notice, time.time() + 6
+        self._screen_dirty = True
+        self.mode = "play"
+        if then_upload and self.online():
+            self.start_transfer()
+        else:
+            self._back_from_transfer()
+
+    def _setup_gesture(self, g: tuple) -> None:
+        if g[0] == "long_press":
+            log.info("Wi-Fi setup cancelled from the TV")
+            self._leave_setup()
+
+    # -- what the setup page asks of the TV
+    def setup_networks(self, rescan: bool):
+        if rescan and self.setup is not None and not self.setup["busy"]:
+            found = self.wifi.scan()
+            if found:
+                self.setup["networks"] = found
+        return list(self.setup["networks"]) if self.setup else []
+
+    def setup_connect(self, ssid: str, password: str) -> None:
+        with self._setup_lock:
+            if self.setup is None or self.mode != "setup":
+                raise RuntimeError("Setup isn't running.")
+            if self.setup["busy"]:
+                raise RuntimeError("The TV is already joining a network.")
+            self.setup["busy"] = True
+            gen = self._setup_gen
+        self.setup["status"] = f"Joining {ssid}..."
+        self._screen_dirty = True
+        threading.Thread(target=self._setup_join, args=(gen, ssid, password), daemon=True).start()
+
+    def _setup_join(self, gen: int, ssid: str, password: str) -> None:
+        time.sleep(self.connect_delay)
+        if not self._setup_current(gen):
+            return
+        creds = (self.setup["ssid"], self.setup["password"])
+        ok, why = self.wifi.connect(ssid, password)                 # the hotspot goes down as part of this
+        if not self._setup_current(gen):
+            return
+        if ok:
+            log.info("joined Wi-Fi %r", ssid)
+            self.setup["status"] = f"Connected to {ssid}"
+            self.setup["connected"] = True
+            self._screen_dirty = True
+            self._draw_screen()
+            time.sleep(self.connect_delay + 2.0)
+            if self._setup_current(gen):
+                self._leave_setup(f"Connected to {ssid}")
+            return
+        log.warning("could not join Wi-Fi %r: %s", ssid, why)
+        reason = "wrong password?" if "secret" in why.lower() or "password" in why.lower() else "not reachable?"
+        self.setup["status"] = f"Couldn't join {ssid} ({reason}). Setup Wi-Fi is back."
+        self._screen_dirty = True
+        ok, _ = self.wifi.hotspot_up(*creds)
+        if self._setup_current(gen):
+            self.setup["busy"] = False
+            if not ok:
+                self._leave_setup("Wi-Fi setup stopped (couldn't restart the hotspot).")
 
     def _back_from_transfer(self) -> None:
         if self.library.next_playable(self.channel_index, +1) is None:
@@ -866,19 +1045,26 @@ class App:
             matrix = qrcodes.matrix(self.web_info["urls"][0] + "/")
             img = render.render_transfer(self.hw, self.name, self.web_info["urls"], self.web_info["pin"], matrix,
                                          [t for t in status if t], progress)
+        elif self.mode == "setup" and self.setup:
+            s = self.setup
+            matrix = qrcodes.matrix(wifi_qr_text(s["ssid"], s["password"]))
+            status = [s["status"]] if s.get("status") else []
+            if notice:
+                status.append(notice)
+            img = render.render_setup(self.hw, self.name, s["ssid"], s["password"], matrix, s["address"], status)
         else:
             return
         self.display.show(image_to_565(img))
         self._screen_dirty, self._last_screen = False, now
 
     def _refresh_screen(self) -> None:
-        if self.mode not in ("empty", "transfer"):
+        if self.mode not in ("empty", "transfer", "setup"):
             return
         now = time.time()
         if self._notice and now >= self._notice_until:
             self._notice = ""
             self._screen_dirty = True
-        if self._screen_dirty or (self.mode == "transfer" and now - self._last_screen >= 1.0):
+        if self._screen_dirty or (self.mode in ("transfer", "setup") and now - self._last_screen >= 1.0):
             self._draw_screen()
 
     # --- what the web page asks of the TV -----------------------------------------------------------------------
@@ -919,6 +1105,7 @@ class App:
             "last_gesture": list(self.last_gesture[:2]) if self.last_gesture else None,
             "shutdown_requested": getattr(self.power, "shutdown_requested", False),
             "upload_page": self.web_info,
+            "wifi_setup": {k: v for k, v in self.setup.items() if k != "password"} if self.setup else None,
         }
 
 
@@ -936,3 +1123,19 @@ class _WebHooks:
 
     def uploaded(self, info: dict) -> None:
         self.app.on_uploaded(info)
+
+
+class _SetupHooks:
+    """What the Wi-Fi setup page may ask of the app."""
+
+    def __init__(self, app: "App"):
+        self.app = app
+
+    def name(self) -> str:
+        return self.app.name
+
+    def networks(self, rescan: bool):
+        return self.app.setup_networks(rescan)
+
+    def connect(self, ssid: str, password: str) -> None:
+        self.app.setup_connect(ssid, password)

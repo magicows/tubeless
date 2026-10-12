@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TV Wi-Fi setup</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0f0c; --panel:#121a14; --line:#1f2f24; --text:#e4efe7; --dim:#8da596; --accent:#35f26b; --bad:#ff6b6b; }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding:env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom)); }
+  main { max-width:520px; margin:0 auto; }
+  h1 { margin:22px 0 4px; font:700 22px/1.2 ui-monospace, Menlo, monospace; color:var(--accent); letter-spacing:.04em; text-transform:uppercase; word-break:break-word; }
+  .sub { color:var(--dim); font-size:14px; margin:0 0 8px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; margin:14px 0; }
+  .card h2 { margin:0 0 10px; font-size:13px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); font-weight:600; }
+  ul { list-style:none; margin:0; padding:0; }
+  li button.net { width:100%; display:flex; justify-content:space-between; gap:12px; text-align:left; background:#0b130d; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:13px 14px; margin:6px 0; font:inherit; cursor:pointer; }
+  li button.net:hover, li button.net:focus { border-color:var(--accent); outline:none; }
+  .meta { color:var(--dim); font-size:13px; white-space:nowrap; }
+  label { display:block; color:var(--dim); font-size:14px; margin-bottom:6px; }
+  input { width:100%; background:#0b130d; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:12px 14px; font:inherit; }
+  input:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .row { display:flex; gap:10px; margin-top:12px; } .row > * { flex:1; }
+  button.go { background:var(--accent); color:#04210d; border:0; border-radius:10px; padding:13px 18px; font:700 16px/1 inherit; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:10px; padding:13px 18px; font:600 16px/1 inherit; cursor:pointer; }
+  button:disabled { opacity:.45; }
+  .msg { margin:10px 0 0; font-size:14px; min-height:1.2em; } .msg.bad { color:var(--bad); } .msg.ok { color:var(--accent); }
+  .show { display:flex; align-items:center; gap:8px; margin-top:8px; color:var(--dim); font-size:14px; } .show input { width:auto; }
+  .hide { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="tvname">TV</h1>
+  <p class="sub">Choose the Wi-Fi network this TV should use.</p>
+
+  <section id="pick" class="card">
+    <h2>Networks nearby</h2>
+    <ul id="nets"></ul>
+    <p class="msg" id="netmsg">Looking...</p>
+    <div class="row"><button class="ghost" id="rescan">Search again</button><button class="ghost" id="other">Other network...</button></div>
+  </section>
+
+  <section id="form" class="card hide">
+    <h2 id="formtitle">Join</h2>
+    <div id="ssidRow" class="hide"><label for="ssid">Network name</label><input id="ssid" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="32"></div>
+    <div id="pwRow"><label for="pw" style="margin-top:10px">Password</label><input id="pw" type="password" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" maxlength="64">
+      <label class="show"><input type="checkbox" id="showpw"> Show password</label></div>
+    <p class="msg" id="formmsg"></p>
+    <div class="row"><button class="ghost" id="back">Back</button><button class="go" id="join">Join</button></div>
+  </section>
+
+  <section id="done" class="card hide">
+    <h2>Joining...</h2>
+    <p id="donetext"></p>
+    <p class="sub">This page will stop responding while the TV switches networks. That's normal. Reconnect your phone or laptop to your usual Wi-Fi; the TV's screen will say when it has joined. If it can't, the TV brings this setup network back so you can try again.</p>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let chosen = null;
+
+function show(which) { for (const id of ["pick", "form", "done"]) $(id).classList.toggle("hide", id !== which); }
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Something went wrong.");
+  return data;
+}
+
+function bars(signal) { return signal >= 70 ? "▂▄▆█" : signal >= 50 ? "▂▄▆" : signal >= 30 ? "▂▄" : "▂"; }
+
+async function load(rescan) {
+  $("netmsg").className = "msg"; $("netmsg").textContent = rescan ? "Searching..." : "Looking...";
+  try {
+    const data = await api(rescan ? "/api/wifi/networks?rescan=1" : "/api/wifi/networks");
+    $("tvname").textContent = data.name || "TV";
+    const list = $("nets"); list.textContent = "";
+    for (const n of data.networks) {
+      const li = document.createElement("li"), b = document.createElement("button");
+      b.className = "net"; b.type = "button";
+      const a = document.createElement("span"); a.textContent = n.ssid;
+      const m = document.createElement("span"); m.className = "meta"; m.textContent = (n.secured ? "🔒 " : "") + bars(n.signal);
+      b.append(a, m); b.onclick = () => choose(n.ssid, n.secured);
+      li.append(b); list.append(li);
+    }
+    $("netmsg").textContent = data.networks.length ? "" : "No networks found. Move the TV closer to your router, or tap Other network.";
+  } catch (e) { $("netmsg").className = "msg bad"; $("netmsg").textContent = e.message; }
+}
+
+function choose(ssid, secured) {
+  chosen = {ssid, secured, manual: ssid === null};
+  $("formtitle").textContent = ssid === null ? "Other network" : "Join " + ssid;
+  $("ssidRow").classList.toggle("hide", ssid !== null);
+  $("pwRow").classList.toggle("hide", secured === false);
+  $("ssid").value = ""; $("pw").value = ""; $("formmsg").textContent = "";
+  show("form"); (ssid === null ? $("ssid") : $("pw")).focus();
+}
+
+$("rescan").onclick = () => load(true);
+$("other").onclick = () => choose(null, true);
+$("back").onclick = () => show("pick");
+$("showpw").onchange = (e) => { $("pw").type = e.target.checked ? "text" : "password"; };
+$("join").onclick = async () => {
+  const ssid = chosen.manual ? $("ssid").value.trim() : chosen.ssid;
+  const password = chosen.secured === false ? "" : $("pw").value;
+  if (!ssid) { $("formmsg").className = "msg bad"; $("formmsg").textContent = "Enter the network name."; return; }
+  if (chosen.secured !== false && password.length < 8) { $("formmsg").className = "msg bad"; $("formmsg").textContent = "Wi-Fi passwords are at least 8 characters."; return; }
+  $("join").disabled = true;
+  try {
+    await api("/api/wifi/connect", {ssid, password});
+    $("donetext").textContent = "The TV is joining " + ssid + ".";
+    show("done");
+  } catch (e) { $("formmsg").className = "msg bad"; $("formmsg").textContent = e.message; }
+  $("join").disabled = false;
+};
+$("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("join").click(); });
+load(false);
+</script>
+</body>
+</html>

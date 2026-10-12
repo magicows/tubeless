@@ -28,7 +28,7 @@ def wait_for(cond, timeout=4.0, step=0.01):
 
 class Rig:
     def __init__(self, tmp_path: Path, channels=None, fresh=False, settings=None, panel_affine=None,
-                 duration=lambda p: 1000.0, start=True, **cfg_over):
+                 duration=lambda p: 1000.0, start=True, wifi=None, **cfg_over):
         videos = tmp_path / "videos"
         for name, files in (channels or {"1.cartoons": [f"c{i}.mp4" for i in range(5)],
                                           "2.nights": [f"n{i}.mp4" for i in range(3)]}).items():
@@ -39,7 +39,7 @@ class Rig:
         kwargs = dict(videos_dir=str(videos), data_dir=str(tmp_path / "data"),
                       static_short="/static_short.mp4", static_long="/static_long.mp4",
                       legacy_state_file=str(tmp_path / "no-legacy.json"),
-                      menu_timeout=2.0, long_press=0.25, web_port=0)
+                      menu_timeout=2.0, long_press=0.25, web_port=0, setup_port=0)
         kwargs.update(cfg_over)
         self.cfg = Config(**kwargs)
         if not fresh:                                      # an existing install (no first-run wizard)
@@ -49,8 +49,10 @@ class Rig:
             raise ValueError("settings need fresh=False")
         self.backend = sim.make(self.cfg, HW)
         self.player = FakePlayer(self.cfg.short_static, self.cfg.long_static, duration_of=duration)
-        self.app = App(self.cfg, HW, self.backend, self.player, rng=random.Random(7), tick_every=0.05)
+        self.app = App(self.cfg, HW, self.backend, self.player, rng=random.Random(7), tick_every=0.05, wifi=wifi)
         self.app.switch_delay = 0.15
+        self.app.connect_delay = 0.05
+        self.app.online_wait = 0.3
         self.app.exit_check_every = 0.05
         self.app.min_restart_gap = 0.0
         self.app.progress_save_every = 0.1

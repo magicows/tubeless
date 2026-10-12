@@ -398,6 +398,9 @@ def run_real(cfg: Config, hw: Hardware, demo: float = 0.0) -> None:
             print("no framebuffer; nothing to show")
             return
         time.sleep(0.3)
+    if not demo and RealChecks(cfg, hw, None, (0, 0))._library()[0] == 0:
+        print("done: no videos, leaving the screen to the app", flush=True)      # the app shows its own 'no videos yet' screen
+        return
     fb = pi.Framebuffer(hw)
     print("framebuffer %dx%d %dbpp stride %d" % (fb.w, fb.h, fb.bpp, fb.stride), flush=True)
     backlight = pi.PigpioBacklight(hw)

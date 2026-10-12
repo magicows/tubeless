@@ -281,11 +281,16 @@ def render_unit(template: str, user: str, appdir: str, name: str) -> str:
     return template.replace("@USER@", user).replace("@APPDIR@", appdir).replace("@NAME@", name)
 
 
+WIFI_HELPER = "/usr/local/lib/tubeless/wifi-helper"          # root-owned, so the user can't change what sudo runs
+CAPTIVE_DNS = "# Installed by Tubeless: while the TV hosts its Wi-Fi setup hotspot, every name leads to the setup page\n" \
+              "address=/#/10.42.0.1\n"
+
+
 def sudoers_rule(user: str) -> str:
-    """Just what Tubeless needs from root: power off, reboot, and restarting itself. Nothing else."""
+    """Just what Tubeless needs from root: power off, reboot, restarting itself, and its one Wi-Fi helper."""
     cmds = ", ".join(["/usr/bin/systemctl poweroff", "/usr/bin/systemctl reboot",
-                      "/usr/bin/systemctl restart tubeless", "/usr/bin/systemctl restart tubeless.service"])
-    return f"# Installed by Tubeless: lets the TV power itself off and restart its own service, nothing more.\n" \
+                      "/usr/bin/systemctl restart tubeless", "/usr/bin/systemctl restart tubeless.service", WIFI_HELPER])
+    return f"# Installed by Tubeless: lets the TV power itself off, restart its own service and set up Wi-Fi, nothing more.\n" \
            f"{user} ALL=(root) NOPASSWD: {cmds}\n"
 
 
@@ -336,6 +341,7 @@ class Context:
     name: str = "Tubeless"
     boot_dir: Optional[Path] = None
     etc: Path = Path("/etc")
+    local_lib: Path = Path("/usr/local/lib")
     dry_run: bool = False
     skip_sd_test: bool = False
     allow_changed_overlays: bool = False
@@ -542,6 +548,8 @@ def step_services(ctx: Context) -> None:
     ctx.runner.run("systemctl", "daemon-reload")
     ctx.runner.run("systemctl", "enable", *UNITS)
 
+    step_wifi_setup(ctx)
+
     rule = sudoers_rule(ctx.user)
     sudoers = ctx.etc / "sudoers.d" / "tubeless"
     if sudoers.exists() and sudoers.read_text() == rule:
@@ -557,6 +565,30 @@ def step_services(ctx: Context) -> None:
         ctx.runner.write(sudoers, rule, mode=0o440)
         ctx.say("      " + ctx.did("sudoers rule installed (power off / reboot / restart Tubeless only)",
                                  "would install a sudoers rule (power off / reboot / restart Tubeless only)"))
+
+
+def step_wifi_setup(ctx: Context) -> None:
+    """The root-owned Wi-Fi helper, and the DNS rule that makes phones pop up the setup page. Needs NetworkManager."""
+    if not (ctx.etc / "NetworkManager").is_dir():
+        ctx.say("      NetworkManager not found: Wi-Fi setup from the TV's screen won't be offered on this system")
+        return
+    source = ctx.appdir / "packaging" / "tubeless-wifi-helper"
+    if not source.exists():
+        source = ctx.source / "packaging" / "tubeless-wifi-helper"
+    if not source.exists():
+        raise InstallError("missing packaging/tubeless-wifi-helper")
+    target = ctx.local_lib / "tubeless" / "wifi-helper"
+    if target.exists() and target.read_text() == source.read_text():
+        ctx.say("      Wi-Fi helper already up to date")
+    else:
+        ctx.runner.write(target, source.read_text(), mode=0o755)
+        ctx.say("      " + ctx.did("Wi-Fi helper installed (root-owned)", "would install the Wi-Fi helper"))
+    dns = ctx.etc / "NetworkManager" / "dnsmasq-shared.d" / "tubeless-captive.conf"
+    if dns.exists() and dns.read_text() == CAPTIVE_DNS:
+        ctx.say("      setup-page DNS rule already in place")
+    else:
+        ctx.runner.write(dns, CAPTIVE_DNS)
+        ctx.say("      " + ctx.did("setup-page DNS rule installed", "would install the setup-page DNS rule"))
 
 
 STEPS: List[Tuple[str, Callable[[Context], None]]] = [

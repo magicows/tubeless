@@ -152,7 +152,7 @@ def system(tmp_path, monkeypatch):
     monkeypatch.setattr(installer, "pwd", type("P", (), {"getpwnam": staticmethod(lambda n: pwd.getpwnam(ME))}))
     runner = FakeRunner()
     ctx = Context(user="sam", home=home, source=source, name="Den", boot_dir=boot, etc=tmp_path / "etc",
-                  skip_sd_test=True, runner=runner)
+                  local_lib=tmp_path / "usr-local-lib", skip_sd_test=True, runner=runner)
     return ctx, runner
 
 
@@ -247,3 +247,31 @@ def test_user_resolution(monkeypatch):
     assert installer.resolve_user(ME)[0] == ME
     monkeypatch.setenv("SUDO_USER", ME)
     assert installer.resolve_user(None)[0] == ME
+
+
+# ---- Wi-Fi setup pieces ---------------------------------------------------------------------------------
+def test_wifi_helper_and_captive_dns_are_installed_where_networkmanager_exists(system):
+    ctx, runner = system
+    (ctx.etc / "NetworkManager").mkdir(parents=True)
+    assert installer.install_all(ctx) == 0
+    helper = ctx.local_lib / "tubeless" / "wifi-helper"
+    assert helper.read_text() == (ctx.source / "packaging" / "tubeless-wifi-helper").read_text()
+    assert helper.stat().st_mode & 0o777 == 0o755
+    assert (ctx.etc / "NetworkManager" / "dnsmasq-shared.d" / "tubeless-captive.conf").read_text() == installer.CAPTIVE_DNS
+    rule = (ctx.etc / "sudoers.d" / "tubeless").read_text()
+    assert installer.WIFI_HELPER in rule and "NOPASSWD: ALL" not in rule and "nmcli" not in rule
+    runner.lines.clear()
+    assert installer.install_all(ctx) == 0
+    assert "Wi-Fi helper already up to date" in "\n".join(runner.lines)
+
+
+def test_without_networkmanager_the_install_still_works_and_says_so(system):
+    ctx, runner = system
+    assert installer.install_all(ctx) == 0
+    assert not (ctx.local_lib / "tubeless").exists()
+    assert "NetworkManager not found" in "\n".join(runner.lines)
+
+
+def test_the_service_may_bind_port_80_without_root():
+    text = (Path(__file__).resolve().parent.parent / "packaging" / "tubeless.service.in").read_text()
+    assert "AmbientCapabilities=CAP_NET_BIND_SERVICE" in text and "NoNewPrivileges" not in text

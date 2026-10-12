@@ -47,13 +47,14 @@ def cmd_run(args) -> int:
     from .app import App
     from .hal import make_backend
     from .player import MpvPlayer
+    from .wifi import make_wifi
 
     cfg = Config.load(args.config)
     setup_logging(cfg)
     hw = load_hardware(cfg.hardware, cfg.hardware_overrides)
     log = logging.getLogger("tubeless")
     log.info("Tubeless %s starting as %r", __version__, cfg.name)
-    app = App(cfg, hw, make_backend(cfg, hw), MpvPlayer(cfg, hw))
+    app = App(cfg, hw, make_backend(cfg, hw), MpvPlayer(cfg, hw), wifi=make_wifi())
     signal.signal(signal.SIGTERM, lambda *_: (app.stop(), sys.exit(0)))
     try:
         app.run()
@@ -117,7 +118,9 @@ def cmd_sim(args) -> int:
                            cfg.long_press, port)
     else:
         player = FakePlayer(cfg.short_static, cfg.long_static, speed=args.speed)
-        app = App(cfg, hw, backend, player)
+        from .wifi import FakeWifi
+        wifi = FakeWifi(ip=None, saved=False) if args.no_network else FakeWifi(ip="192.168.1.50", saved=True)
+        app = App(cfg, hw, backend, player, wifi=wifi)
         app.config_path = work / "config.json"
         app.switch_delay = 3.0 / max(args.speed, 1)
         app.start_background()
@@ -205,6 +208,7 @@ def main(argv=None) -> int:
     p.add_argument("--screen", choices=["tv", "boot"], default="tv")
     p.add_argument("--speed", type=float, default=1.0, help="make fake time run faster")
     p.add_argument("--menu-timeout", type=float, default=5.0)
+    p.add_argument("--no-network", action="store_true", help="pretend the TV has no Wi-Fi (shows Wi-Fi setup; password for the fake network HomeWiFi is 'correct horse')")
     p.add_argument("--greeting", default="Wake up, couch potato...")
     p.add_argument("--boot-seconds", type=float, default=25.0)
     p.set_defaults(func=cmd_sim)

@@ -158,3 +158,18 @@ def test_a_port_that_is_taken_is_reported_not_fatal(tmp_path):
     finally:
         r.stop()
         blocker.close()
+
+
+def test_boot_screen_steps_aside_when_there_are_no_videos(tmp_path, capsys, monkeypatch):
+    from tubeless import bootscreen
+    from tubeless.config import Config
+    from tubeless.hal import pi
+    from tubeless.hardware import load_hardware
+    cfg = Config(videos_dir=str(tmp_path / "videos"))
+    (tmp_path / "videos").mkdir()
+    fb = tmp_path / "fb"; fb.write_text("")
+    sysdir = tmp_path / "sys"; sysdir.mkdir(); (sysdir / "virtual_size").write_text("480,640")
+    monkeypatch.setattr(pi, "FB_DEV", str(fb)); monkeypatch.setattr(pi, "FB_SYS", str(sysdir))
+    monkeypatch.setattr(pi, "Framebuffer", lambda hw: (_ for _ in ()).throw(AssertionError("drew on the screen")))
+    bootscreen.run_real(cfg, load_hardware(cfg.hardware, cfg.hardware_overrides))
+    assert "no videos" in capsys.readouterr().out
