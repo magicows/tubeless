@@ -263,7 +263,7 @@ class DemoChecks:
     """Scripted timings so the screen can be judged without rebooting."""
     SCHEDULE = [("DISPLAY", 0.0, "vc4drm 480x640"), ("TOUCH", 1.2, "Goodix capacitive"),
                 ("AUDIO", 2.0, "pwm gpio19"), ("BACKLIGHT", 2.8, "pwm gpio18"),
-                ("LIBRARY", 3.6, "271 videos / 8 channels"), ("NETWORK", 7.5, "192.168.1.124")]
+                ("LIBRARY", 3.6, "271 videos / 8 channels"), ("NETWORK", 7.5, "192.168.1.42")]
 
     def __init__(self, length: float):
         self.length = length

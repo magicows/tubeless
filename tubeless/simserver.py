@@ -83,7 +83,7 @@ class Screen:
 
     def compose(self, bezel: bool = False) -> Image.Image:
         hw = self.hw
-        framebuffer_mode = self.mode_fn is not None and self.mode_fn() in ("empty", "transfer")
+        framebuffer_mode = self.mode_fn is not None and self.mode_fn() in ("empty", "transfer", "setup")
         if self.display is not None and (self.player is None or framebuffer_mode):
             with self.display.lock:
                 px = self.display.frame565

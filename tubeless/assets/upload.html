@@ -51,6 +51,7 @@
   .bar2 { height:8px; background:#0b130d; border-radius:6px; overflow:hidden; margin:8px 0 4px; } .bar2 > i { display:block; height:100%; width:0; background:var(--accent); transition:width .4s; }
   .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; } .toolbar button { padding:10px 14px; font-size:14px; }
   button.danger { background:transparent; color:var(--bad); border:1px solid var(--bad); }
+  .stickybar { position:sticky; bottom:0; margin:14px -16px -16px; padding:12px 16px 14px; background:var(--panel); border-top:1px solid var(--line); border-radius:0 0 14px 14px; box-shadow:0 -10px 14px -8px rgba(0,0,0,.6); }
   .check { display:flex; align-items:center; gap:10px; color:var(--text); font-size:15px; margin:10px 0; } .check input { width:22px; height:22px; accent-color:var(--accent); }
   .hide { display:none !important; }
 </style>
@@ -82,8 +83,6 @@
         <div class="row" style="align-items:center"><button class="ghost" id="ytback" style="flex:0 0 auto">&larr; Channels</button><h2 id="ythead" style="margin:0;flex:1"></h2></div>
         <p class="msg" id="ytsummary"></p>
         <div id="ytnotice" class="msg bad hide"></div>
-        <div class="bar2 hide" id="ytbarwrap"><i id="ytbar"></i></div><div class="meta hide" id="ytnow" style="color:var(--dim);font-size:13px"></div>
-        <div class="toolbar"><button id="ytsync">Download now</button><button class="ghost hide" id="ytstop">Stop</button></div>
 
         <h2 style="margin-top:18px">Add a playlist or video</h2>
         <div class="row"><input id="yturl" type="text" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Paste a YouTube link" aria-label="YouTube link"><button id="ytfetch" class="ghost">Look up</button></div>
@@ -102,6 +101,11 @@
         <p class="msg" id="ytsavemsg"></p>
         <div class="toolbar"><button id="ytsave" disabled>Save changes</button><button class="danger" id="ytdelete">Remove channel</button></div>
         <small>Tick the videos you want. Unticking one that's already on the TV removes it from the TV.</small>
+        <div class="stickybar" id="actionbar">
+          <div class="bar2 hide" id="ytbarwrap"><i id="ytbar"></i></div>
+          <div class="meta hide" id="ytnow" style="color:var(--dim);font-size:13px;margin-bottom:6px"></div>
+          <div class="row"><button id="ytsync">Download</button><button class="ghost hide" id="ytstop" style="flex:0 0 auto">Stop</button></div>
+        </div>
       </section>
     </div>
 
@@ -354,8 +358,10 @@ function renderYt() {
   $('ytoffline').checked = ytData.mode === 'download'; $('streamnote').classList.toggle('hide', ytData.mode === 'download');
   say($('ytsummary'), !items.length ? '' : ytData.mode === 'stream' ? (waiting + done) + ' video' + (waiting + done === 1 ? '' : 's') + ' will play from YouTube' + (done ? ' (' + done + ' already on the TV)' : '')
     : done + ' on the TV' + (waiting ? ', ' + waiting + ' waiting to download' : '') + (errors ? ', ' + errors + ' with problems' : ''));
-  $('ytsync').disabled = !(waiting || errors) || !state.youtube.available || ytData.mode !== 'download';
-  $('ytsync').classList.toggle('hide', ytData.mode !== 'download');
+  const fetchable = waiting + errors;
+  $('ytsync').textContent = fetchable ? 'Download ' + fetchable + ' video' + (fetchable === 1 ? '' : 's') + ' to the TV' : 'Everything is on the TV';
+  $('ytsync').disabled = !fetchable || !state.youtube.available || ytData.mode !== 'download';
+  $('actionbar').classList.toggle('hide', ytData.mode !== 'download' || (!fetchable && !lastWorking));
   $('ytnotice').classList.toggle('hide', state.youtube.available);
   $('ytnotice').textContent = state.youtube.available ? '' : 'yt-dlp is not installed on this TV, so videos cannot be downloaded. See the README.';
   $('ytsave').disabled = !dirty;
@@ -408,6 +414,7 @@ $('foundadd').onclick = async () => {
     const n = foundTicks.size;
     $('found').classList.add('hide'); $('yturl').value = ''; say($('ytfetchmsg'), 'Added ' + n + ' video' + (n === 1 ? '' : 's') + (r.added > n ? ' (the other ' + (r.added - n) + ' from the list are in the channel, unticked)' : '') + '. Tap "Download now" to fetch them.', 'ok');
     dirty = false; await refreshYt(true); await load();
+    $('ytitems').scrollIntoView({behavior: 'smooth', block: 'center'});
   } catch (e) { say($('ytfetchmsg'), e.message, 'bad'); $('foundadd').disabled = false; }
 };
 
