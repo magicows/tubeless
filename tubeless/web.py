@@ -27,11 +27,12 @@ from urllib.parse import parse_qs, urlparse
 from . import __version__, advice
 from .config import ASSETS_DIR
 from .library import VIDEO_EXTS
+from .youtube import YouTubeError
 
 log = logging.getLogger(__name__)
 
 MAX_CHUNK = 16 * 1024 * 1024
-MAX_JSON = 4096
+MAX_JSON = 65536
 RESERVE_BYTES = 300 * 1024 * 1024        # never fill the card completely
 MAX_FILENAME = 150
 MAX_CHANNEL = 40
@@ -228,8 +229,10 @@ class WebServer:
         uploaded(info: dict) -> None          after a file completes (info includes advice)
     """
 
-    def __init__(self, manager: UploadManager, session: Session, hooks, host: str = "0.0.0.0", port: int = 8080):
+    def __init__(self, manager: UploadManager, session: Session, hooks, host: str = "0.0.0.0", port: int = 8080,
+                 youtube=None):
         self.manager, self.session, self.hooks = manager, session, hooks
+        self.youtube = youtube                                      # a youtube.YouTubeManager, or None
         self.host, self.port = host, port
         self.httpd: Optional[ThreadingHTTPServer] = None
         self.thread: Optional[threading.Thread] = None
@@ -286,6 +289,21 @@ class WebServer:
                     self._fail(400, "Bad request.")
                     return None
 
+            def _yt(self) -> bool:
+                if server.youtube is None:
+                    self._fail(501, "YouTube channels aren't available.")
+                    return False
+                return True
+
+            def _yt_call(self, fn, status: int = 200):
+                try:
+                    self._json(status, fn())
+                except YouTubeError as e:
+                    self._fail(e.status if 400 <= e.status < 600 else 400, e.message)
+                except Exception:
+                    log.exception("YouTube request failed")
+                    self._fail(500, "The TV had a problem with that.")
+
             def _query(self) -> Dict[str, str]:
                 return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
 
@@ -302,7 +320,20 @@ class WebServer:
                         state = server.hooks.state()
                         state["free_bytes"] = server.manager.free_bytes()
                         state["version"] = __version__
+                        yt = server.youtube
+                        state["youtube"] = yt.status() if yt else {"available": False}
+                        sums = yt.summaries() if yt else {}
+                        for ch in state.get("channels", []):
+                            ch["kind"] = "youtube" if ch["name"] in sums else "folder"
+                            if ch["name"] in sums:
+                                ch["youtube"] = sums[ch["name"]]
                         self._json(200, state)
+                elif route == "/api/yt/progress":
+                    if self._authed() and self._yt():
+                        self._json(200, server.youtube.progress())
+                elif route == "/api/yt/channel":
+                    if self._authed() and self._yt():
+                        self._yt_call(lambda: server.youtube.info(self._query().get("channel", "")))
                 elif route == "/api/upload/status":
                     if self._authed():
                         q = self._query()
@@ -343,10 +374,45 @@ class WebServer:
                     data = self._body_json()
                     if data is None:
                         return
+                    if data.get("kind") == "youtube":
+                        if self._yt():
+                            self._yt_call(lambda: {"channel": server.youtube.create(str(data.get("name", "")))})
+                        return
                     try:
                         self._json(200, {"channel": server.manager.create_channel(str(data.get("name", "")))})
                     except UploadError as e:
                         self._fail(e.status, e.message)
+                elif route.startswith("/api/yt/") or route == "/api/channel/delete":
+                    if not self._authed() or not self._yt():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    yt, ch = server.youtube, str(data.get("channel", data.get("name", "")))
+                    if route == "/api/yt/resolve":
+                        def resolve():
+                            lst = yt.resolve(str(data.get("url", "")))
+                            return {"title": lst.title, "kind": lst.kind, "skipped": lst.skipped,
+                                    "entries": [{"id": e.id, "title": e.title, "duration": e.duration} for e in lst.entries]}
+                        self._yt_call(resolve)
+                    elif route == "/api/yt/add":
+                        sel = data.get("selected")
+                        self._yt_call(lambda: yt.add(ch, str(data.get("url", "")), sel if isinstance(sel, list) else None))
+                    elif route == "/api/yt/select":
+                        sel = data.get("selected")
+                        if not isinstance(sel, list):
+                            return self._fail(400, "Bad request.")
+                        self._yt_call(lambda: yt.set_selection(ch, sel))
+                    elif route == "/api/yt/mode":
+                        self._yt_call(lambda: (yt.set_mode(ch, str(data.get("mode", ""))), {"mode": data.get("mode")})[1])
+                    elif route == "/api/yt/sync":
+                        self._yt_call(lambda: {"queued": yt.sync(ch or None)})
+                    elif route == "/api/yt/cancel":
+                        self._yt_call(lambda: (yt.cancel(), {"ok": True})[1])
+                    elif route == "/api/channel/delete":
+                        self._yt_call(lambda: (yt.delete(ch), {"deleted": ch})[1])
+                    else:
+                        self._fail(404, "Not found.")
                 else:
                     self._fail(404, "Not found.")
 

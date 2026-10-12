@@ -29,6 +29,7 @@ from .skip import skip_target
 from .state import Settings, Store
 from .setupweb import SetupServer
 from .web import Session, UploadManager, WebServer, local_ip
+from .youtube import YouTubeManager, YtDlp, find_ytdlp
 from .wifi import HOTSPOT_IP, Wifi, new_hotspot_credentials, wifi_qr_text
 
 log = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ DIM_LEVEL = 25                # percent
 class App:
     def __init__(self, cfg: Config, hw: Hardware, backend, player, library: Optional[Library] = None,
                  store: Optional[Store] = None, rng: Optional[random.Random] = None, tick_every: float = 5.0,
-                 wifi: Optional[Wifi] = None):
+                 wifi: Optional[Wifi] = None, ytdlp=None):
         self.cfg, self.hw = cfg, hw
         self.touch, self.backlight, self.power = backend.touch, backend.backlight, backend.power
         self.audio = getattr(backend, "audio", None)
@@ -100,6 +101,12 @@ class App:
         self.web: Optional[WebServer] = None
         self.uploads: Optional[UploadManager] = None
         self.web_info: Optional[dict] = None   # {"pin": ..., "urls": [...]} while upload mode is on
+        self._stream: Optional[dict] = None    # the YouTube video that is loading / playing, if any
+        self._stream_notice_until = 0.0
+        self.stream_notice_after = 2.0         # seconds of loading before the 'loading from YouTube' message appears
+        self.stream_notice_for = 7.0
+        self._ytdlp = ytdlp                    # tests pass a FakeYtDlp; normally found when the upload page starts
+        self.youtube: Optional[YouTubeManager] = None
         self.wifi = wifi                       # None, or something that can make a hotspot and join networks
         self.setup: Optional[dict] = None      # while Wi-Fi setup is on: ssid, password, address, status, ...
         self._setup_server: Optional[SetupServer] = None
@@ -753,7 +760,7 @@ class App:
     # ─────────────────────────────────────────
     def _tracker_loop(self) -> None:
         while not self.stop_event.wait(min(self.tracker_every, 1.0) if (self._pending_resume or self._overlay_pending
-                                                                        or self.mode in ("transfer", "setup"))
+                                                                        or self._stream or self.mode in ("transfer", "setup"))
                                        else self.tracker_every):
             try:
                 self._retry_overlay()
@@ -761,6 +768,51 @@ class App:
                 self._track()
             except Exception:
                 log.exception("tracker error")
+
+    # ─────────────────────────────────────────
+    #  Videos played straight from YouTube: say when they are loading, and when one can't be played
+    # ─────────────────────────────────────────
+    def _watch_stream(self, rel: Optional[str]) -> None:
+        now = time.time()
+        if self._stream_notice_until and now >= self._stream_notice_until:
+            self._stream_notice_until = 0.0
+            if not self.menu_open:
+                self._clear_overlay()
+        cur = self._stream
+        streaming = self.library.is_stream(rel)
+        if cur and (not streaming or cur["rel"] != rel):               # moved on from a YouTube video
+            if cur["shown"] and not self.menu_open:
+                self._clear_overlay()
+            if not cur["loaded"] and self.last_activity < cur["since"]:
+                self._stream_failed(cur)                               # nobody skipped it: it genuinely wouldn't play
+            self._stream = cur = None
+        if not streaming or self.plan is None:
+            return
+        if cur is None:
+            self._stream = cur = {"rel": rel, "since": now, "loaded": False, "shown": False}
+        if self.player.get("time-pos") is not None:
+            if not cur["loaded"]:
+                cur["loaded"] = True
+                if cur["shown"] and not self.menu_open:
+                    self._clear_overlay()
+        elif not cur["loaded"] and not cur["shown"] and now - cur["since"] > self.stream_notice_after and not self.menu_open and self.mode == "play":
+            cur["shown"] = True
+            title = self.library.title_of(self.plan.channel, rel)
+            self._set_overlay(render.render_message(self.hw, "LOADING FROM YOUTUBE", [title[:44], "This can take about 10 seconds"], self.name))
+
+    def _stream_failed(self, cur: dict) -> None:
+        title = self.library.title_of(self.plan.channel, cur["rel"]) if self.plan else ""
+        if not find_ytdlp(self.cfg.ytdlp_path):
+            why = "yt-dlp isn't installed on this TV"
+        elif self.wifi_available and not self.online():
+            why = "No Wi-Fi: this channel needs the internet"
+        else:
+            why = "YouTube wouldn't play it, so it was skipped"
+        log.warning("could not play %r from YouTube: %s", title, why)
+        if self.menu_open or self.mode != "play":
+            return
+        self._set_overlay(render.render_message(self.hw, "COULDN'T PLAY", [title[:44], why, "Swipe to change channel"], self.name))
+        self._stream_notice_until = time.time() + self.stream_notice_for
 
     def _track(self) -> None:
         if self.plan is None or self.mode == "shutdown" or not self.player.alive():
@@ -770,6 +822,7 @@ class App:
             return
         self._last_pos = (pos, count)
         rel = self.playlists.episode_at(self.plan, pos)
+        self._watch_stream(rel)
         if rel is None:
             return                                              # on a static
         if self._pending_resume:
@@ -814,7 +867,10 @@ class App:
             pass
         self.uploads = UploadManager(self.library.root)
         session = Session()
-        server = WebServer(self.uploads, session, _WebHooks(self), host="0.0.0.0", port=self.cfg.web_port)
+        self.youtube = YouTubeManager(self.library.root, self._ytdlp or YtDlp(find_ytdlp(self.cfg.ytdlp_path)),
+                                      on_change=self._mark_screen_dirty)
+        server = WebServer(self.uploads, session, _WebHooks(self), host="0.0.0.0", port=self.cfg.web_port,
+                           youtube=self.youtube)
         try:
             port = server.start()
         except OSError as e:
@@ -831,7 +887,13 @@ class App:
         self._screen_dirty = True
         self._draw_screen()
 
+    def _mark_screen_dirty(self) -> None:
+        self._screen_dirty = True
+
     def stop_transfer(self) -> None:
+        if self.youtube is not None:
+            self.youtube.shutdown()                             # downloads pause; the list of what you picked stays
+            self.youtube = None
         if self.web is not None:
             self.web.stop()
         self.web, self.web_info = None, None
@@ -1037,6 +1099,14 @@ class App:
                 a = snap["active"][0]
                 status.append(f"Uploading  {a['name']}")
                 progress = a["received"] / a["total"] if a["total"] else None
+            yt = self.youtube.progress() if self.youtube else None
+            if yt and yt["active"]:
+                a = yt["active"]
+                status.append(f"YouTube: {a['title']}" + (f"  (+{yt['queued']} waiting)" if yt["queued"] else ""))
+                if progress is None:
+                    progress = a["progress"]
+            elif yt and yt["failed"] and self.youtube.busy() is False and not snap["active"]:
+                status.append(f"{len(yt['failed'])} YouTube video{'s' if len(yt['failed']) != 1 else ''} couldn't be fetched (see the page)")
             done = len(snap["completed"])
             status.append(f"{done} file{'s' if done != 1 else ''} received" if done else
                           ("" if snap["active"] else "Waiting for you to connect..."))

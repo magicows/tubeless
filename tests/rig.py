@@ -28,7 +28,7 @@ def wait_for(cond, timeout=4.0, step=0.01):
 
 class Rig:
     def __init__(self, tmp_path: Path, channels=None, fresh=False, settings=None, panel_affine=None,
-                 duration=lambda p: 1000.0, start=True, wifi=None, **cfg_over):
+                 duration=lambda p: 1000.0, start=True, wifi=None, ytdlp=None, player_args=None, **cfg_over):
         videos = tmp_path / "videos"
         for name, files in (channels or {"1.cartoons": [f"c{i}.mp4" for i in range(5)],
                                           "2.nights": [f"n{i}.mp4" for i in range(3)]}).items():
@@ -48,10 +48,12 @@ class Rig:
         elif settings:
             raise ValueError("settings need fresh=False")
         self.backend = sim.make(self.cfg, HW)
-        self.player = FakePlayer(self.cfg.short_static, self.cfg.long_static, duration_of=duration)
-        self.app = App(self.cfg, HW, self.backend, self.player, rng=random.Random(7), tick_every=0.05, wifi=wifi)
+        self.player = FakePlayer(self.cfg.short_static, self.cfg.long_static, duration_of=duration, **(player_args or {}))
+        self.app = App(self.cfg, HW, self.backend, self.player, rng=random.Random(7), tick_every=0.05, wifi=wifi, ytdlp=ytdlp)
         self.app.switch_delay = 0.15
         self.app.connect_delay = 0.05
+        self.app.stream_notice_after = 0.3
+        self.app.stream_notice_for = 1.0
         self.app.online_wait = 0.3
         self.app.exit_check_every = 0.05
         self.app.min_restart_gap = 0.0

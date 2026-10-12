@@ -345,6 +345,7 @@ class Context:
     dry_run: bool = False
     skip_sd_test: bool = False
     allow_changed_overlays: bool = False
+    with_youtube: bool = False
     runner: Runner = field(default_factory=Runner)
     reboot_needed: bool = False
 
@@ -591,6 +592,30 @@ def step_wifi_setup(ctx: Context) -> None:
         ctx.say("      " + ctx.did("setup-page DNS rule installed", "would install the setup-page DNS rule"))
 
 
+YTDLP_VENV = Path(".local/share/tubeless/ytdlp")           # under the user's home; Tubeless looks for yt-dlp here
+
+
+def step_youtube(ctx: Context) -> None:
+    """Optional: what YouTube channels need (yt-dlp, kept up to date by pip, and ffmpeg to join video and sound)."""
+    if not ctx.with_youtube:
+        ctx.say("      not requested (add --with-youtube to enable YouTube channels; see the README for what that involves)")
+        return
+    ffmpeg = ctx.runner.query("dpkg", "-s", "ffmpeg")
+    if ffmpeg.returncode != 0 or "install ok installed" not in ffmpeg.stdout:
+        ctx.say("      installing ffmpeg")
+        env = {"DEBIAN_FRONTEND": "noninteractive"}
+        ctx.runner.run("apt-get", "-o", "Acquire::Retries=5", "install", "-y", "--no-install-recommends", "ffmpeg", env=env)
+    venv = ctx.home / YTDLP_VENV
+    if (venv / "bin" / "yt-dlp").exists():
+        ctx.say("      yt-dlp already installed (update it any time with: python3 -m tubeless youtube update)")
+        return
+    ctx.say("      installing yt-dlp into " + str(venv))
+    ctx.runner.run("python3", "-m", "venv", str(venv))
+    ctx.runner.run(str(venv / "bin" / "pip"), "install", "--upgrade", "yt-dlp")
+    if not ctx.dry_run and venv.exists():
+        _chown_tree(ctx.home / ".local", ctx.user)
+
+
 STEPS: List[Tuple[str, Callable[[Context], None]]] = [
     ("Checking this system", step_preflight),
     ("Installing packages", step_packages),
@@ -598,6 +623,7 @@ STEPS: List[Tuple[str, Callable[[Context], None]]] = [
     ("Console and backlight", step_console),
     ("Installing Tubeless", step_app),
     ("Services and permissions", step_services),
+    ("YouTube support (optional)", step_youtube),
 ]
 
 
@@ -643,7 +669,7 @@ def cmd_all(args) -> int:
     source = Path(args.source).resolve() if args.source else Path(__file__).resolve().parent.parent
     ctx = Context(user=user, home=home, source=source, name=args.name, boot_dir=Path(args.boot_dir) if args.boot_dir else None,
                   dry_run=args.dry_run, skip_sd_test=args.skip_sd_test, allow_changed_overlays=args.allow_changed_overlays,
-                  runner=Runner(args.dry_run))
+                  with_youtube=args.with_youtube, runner=Runner(args.dry_run))
     return install_all(ctx)
 
 
@@ -704,6 +730,8 @@ def main(argv=None) -> int:
     p.add_argument("--boot-dir")
     p.add_argument("--dry-run", action="store_true", help="show what would be done, change nothing")
     p.add_argument("--skip-sd-test", action="store_true")
+    p.add_argument("--with-youtube", action="store_true",
+                   help="also install what YouTube channels need (ffmpeg, and yt-dlp from PyPI)")
     p.add_argument("--allow-changed-overlays", action="store_true",
                    help="accept Waveshare overlay files that differ from the ones Tubeless was tested with")
     p.set_defaults(func=cmd_all)

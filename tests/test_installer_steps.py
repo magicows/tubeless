@@ -275,3 +275,32 @@ def test_without_networkmanager_the_install_still_works_and_says_so(system):
 def test_the_service_may_bind_port_80_without_root():
     text = (Path(__file__).resolve().parent.parent / "packaging" / "tubeless.service.in").read_text()
     assert "AmbientCapabilities=CAP_NET_BIND_SERVICE" in text and "NoNewPrivileges" not in text
+
+
+# ---- YouTube support (optional) -----------------------------------------------------------------------------
+def test_youtube_support_is_off_unless_asked_for(system):
+    ctx, runner = system
+    assert installer.install_all(ctx) == 0
+    assert not [c for c in runner.commands if "yt-dlp" in " ".join(c) or "ffmpeg" in c]
+    assert "--with-youtube" in "\n".join(runner.lines)
+
+
+def test_with_youtube_installs_ffmpeg_and_ytdlp_into_the_users_folder(system):
+    ctx, runner = system
+    ctx.with_youtube = True
+    assert installer.install_all(ctx) == 0
+    venv = ctx.home / installer.YTDLP_VENV
+    assert any(c[0] == "apt-get" and "ffmpeg" in c for c in runner.commands)
+    assert ("python3", "-m", "venv", str(venv)) in runner.commands
+    assert (str(venv / "bin" / "pip"), "install", "--upgrade", "yt-dlp") in runner.commands
+
+
+def test_with_youtube_leaves_an_existing_ytdlp_alone(system):
+    ctx, runner = system
+    ctx.with_youtube = True
+    (ctx.home / installer.YTDLP_VENV / "bin").mkdir(parents=True)
+    (ctx.home / installer.YTDLP_VENV / "bin" / "yt-dlp").write_text("")
+    runner.installed.add("ffmpeg")
+    assert installer.install_all(ctx) == 0
+    assert not [c for c in runner.commands if c[0] == "python3" or c[0].endswith("/pip")]
+    assert "already installed" in "\n".join(runner.lines)

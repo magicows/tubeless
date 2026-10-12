@@ -58,7 +58,9 @@ A channel is a folder today. The change is to let a channel be a *source*: a loc
 selection. Everything after the source (static between episodes, shuffle, resume, sleep timer) stays the same. A source gives
 the player a list of things to play and their lengths. Channels are created and edited on the web companion, never on the TV.
 
-* **YouTube playlist** (opt in; Wi-Fi needed). Public or unlisted playlists only, no sign-in. The user pastes a playlist URL on the
+* **YouTube playlist** (opt in). *Built:* download or stream, per-video ticking, merging playlists and single videos, error messages
+  on the TV, `--with-youtube` installer step, daily yt-dlp watch workflow (opens an issue if a new yt-dlp breaks it). Still to do: a
+  "Sync now" outside the phone page, an update button for yt-dlp on the page. Original notes: (Wi-Fi needed for streaming). Public or unlisted playlists only, no sign-in. The user pastes a playlist URL on the
   companion page, and picks per channel:
   * **Download for offline** (ticked): the TV fetches 480p H.264 files into the channel's folder while on Wi-Fi, then plays them like
     any local file. Most robust: no buffering, works offline.

@@ -35,6 +35,23 @@
   .adv li { padding:6px 10px; border-left:3px solid var(--line); margin:4px 0; background:#0d150f; border-radius:0 8px 8px 0; }
   .adv .ok { border-color:var(--accent); } .adv .info { border-color:var(--info); } .adv .warn { border-color:var(--warn); }
   small { color:var(--dim); }
+  nav.tabs { display:flex; gap:6px; margin:10px 0 4px; border-bottom:1px solid var(--line); }
+  nav.tabs button { background:transparent; color:var(--dim); border:0; border-bottom:3px solid transparent; border-radius:0; padding:10px 14px; font:600 15px/1 inherit; }
+  nav.tabs button.on { color:var(--accent); border-bottom-color:var(--accent); }
+  .chan { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 0; border-top:1px solid var(--line); cursor:pointer; }
+  .chan:first-child { border-top:0; } .chan .nm { font-weight:600; word-break:break-word; } .chan .sub2 { color:var(--dim); font-size:13px; }
+  .badge { font-size:11px; letter-spacing:.08em; text-transform:uppercase; padding:3px 8px; border-radius:20px; border:1px solid var(--line); color:var(--dim); white-space:nowrap; }
+  .badge.yt { color:#ff7b7b; border-color:#5a2a2a; }
+  .item { display:flex; align-items:flex-start; gap:10px; padding:9px 0; border-top:1px solid var(--line); }
+  .item:first-child { border-top:0; } .item input[type=checkbox] { width:22px; height:22px; margin-top:2px; flex:0 0 auto; accent-color:var(--accent); }
+  .item .t { flex:1; min-width:0; word-break:break-word; font-size:15px; } .item .m { color:var(--dim); font-size:12px; }
+  .chip { font-size:11px; padding:2px 8px; border-radius:20px; white-space:nowrap; border:1px solid var(--line); color:var(--dim); }
+  .chip.done { color:var(--accent); border-color:#1d5a34; } .chip.error { color:var(--bad); border-color:#5a2a2a; } .chip.waiting { color:var(--info); border-color:#24435a; }
+  .listbox { max-height:46vh; overflow:auto; border:1px solid var(--line); border-radius:10px; padding:2px 10px; margin:10px 0; background:#0d150f; }
+  .bar2 { height:8px; background:#0b130d; border-radius:6px; overflow:hidden; margin:8px 0 4px; } .bar2 > i { display:block; height:100%; width:0; background:var(--accent); transition:width .4s; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; } .toolbar button { padding:10px 14px; font-size:14px; }
+  button.danger { background:transparent; color:var(--bad); border:1px solid var(--bad); }
+  .check { display:flex; align-items:center; gap:10px; color:var(--text); font-size:15px; margin:10px 0; } .check input { width:22px; height:22px; accent-color:var(--accent); }
   .hide { display:none !important; }
 </style>
 </head>
@@ -50,24 +67,66 @@
   </section>
 
   <div id="app" class="hide">
-    <section class="card">
-      <h2>Name this TV</h2>
-      <div class="row"><input id="nameIn" type="text" maxlength="16" autocomplete="off" aria-label="TV name"><button id="saveName" class="ghost">Save</button></div>
-      <p class="msg" id="namemsg"></p>
-    </section>
+    <nav class="tabs" id="tabs"><button data-tab="channels" class="on">Channels</button><button data-tab="upload">Upload</button><button data-tab="tv">TV</button></nav>
 
-    <section class="card">
-      <h2>Add videos</h2>
-      <label for="channel">Put them in this channel</label>
-      <select id="channel"></select>
-      <input id="newChannel" class="hide" type="text" maxlength="40" placeholder="Name the new channel (e.g. 1.cartoons)" style="margin-top:10px" aria-label="New channel name">
-      <div class="drop" id="drop" tabindex="0" role="button" style="margin-top:14px">Tap to choose videos<br><small>or drop them here</small></div>
-      <input id="files" type="file" accept="video/*,.mkv,.mp4,.m4v,.mov,.avi,.webm" multiple class="hide">
-      <p class="msg" id="upmsg"></p>
-      <small>Keep this page open while uploading. When you've finished, hold the TV's screen to stop upload mode and start watching.</small>
-    </section>
+    <div id="tab-channels">
+      <section class="card" id="chanlist">
+        <h2>Your channels</h2>
+        <div id="channels"></div>
+        <div class="row" style="margin-top:12px"><button class="ghost" id="newFolder">+ Folder channel</button><button class="ghost" id="newYt">+ YouTube channel</button></div>
+        <div id="newbox" class="hide" style="margin-top:12px"><label for="newname" id="newlabel">Name</label>
+          <div class="row"><input id="newname" type="text" maxlength="40" autocomplete="off"><button id="newgo">Create</button></div><p class="msg" id="newmsg"></p></div>
+      </section>
 
-    <section class="card hide" id="results"><h2>Uploads</h2><div id="list"></div></section>
+      <section class="card hide" id="yt">
+        <div class="row" style="align-items:center"><button class="ghost" id="ytback" style="flex:0 0 auto">&larr; Channels</button><h2 id="ythead" style="margin:0;flex:1"></h2></div>
+        <p class="msg" id="ytsummary"></p>
+        <div id="ytnotice" class="msg bad hide"></div>
+        <div class="bar2 hide" id="ytbarwrap"><i id="ytbar"></i></div><div class="meta hide" id="ytnow" style="color:var(--dim);font-size:13px"></div>
+        <div class="toolbar"><button id="ytsync">Download now</button><button class="ghost hide" id="ytstop">Stop</button></div>
+
+        <h2 style="margin-top:18px">Add a playlist or video</h2>
+        <div class="row"><input id="yturl" type="text" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Paste a YouTube link" aria-label="YouTube link"><button id="ytfetch" class="ghost">Look up</button></div>
+        <p class="msg" id="ytfetchmsg"></p>
+        <div id="found" class="hide">
+          <div class="sub" id="foundtitle" style="font-weight:600"></div>
+          <div class="toolbar"><button class="ghost" id="foundall">Select all</button><button class="ghost" id="foundnone">None</button></div>
+          <div class="listbox" id="foundlist"></div>
+          <button id="foundadd" style="width:100%">Add to this channel</button>
+        </div>
+
+        <h2 style="margin-top:20px">In this channel</h2>
+        <label class="check"><input type="checkbox" id="ytoffline" checked> <span>Download to the TV <small>so it plays with no Wi-Fi</small></span></label>
+        <p class="sub hide" id="streamnote">Not downloading: the TV will play these straight from YouTube, which needs Wi-Fi and takes about 10 seconds to start each video. If one can't be played, the TV says so and moves on.</p>
+        <div class="listbox" id="ytitems"></div>
+        <p class="msg" id="ytsavemsg"></p>
+        <div class="toolbar"><button id="ytsave" disabled>Save changes</button><button class="danger" id="ytdelete">Remove channel</button></div>
+        <small>Tick the videos you want. Unticking one that's already on the TV removes it from the TV.</small>
+      </section>
+    </div>
+
+    <div id="tab-upload" class="hide">
+      <section class="card">
+        <h2>Add videos from this device</h2>
+        <label for="channel">Put them in this channel</label>
+        <select id="channel"></select>
+        <input id="newChannel" class="hide" type="text" maxlength="40" placeholder="Name the new channel (e.g. 1.cartoons)" style="margin-top:10px" aria-label="New channel name">
+        <div class="drop" id="drop" tabindex="0" role="button" style="margin-top:14px">Tap to choose videos<br><small>or drop them here</small></div>
+        <input id="files" type="file" accept="video/*,.mkv,.mp4,.m4v,.mov,.avi,.webm" multiple class="hide">
+        <p class="msg" id="upmsg"></p>
+        <small>Keep this page open while uploading. When you've finished, hold the TV's screen to stop upload mode and start watching.</small>
+      </section>
+      <section class="card hide" id="results"><h2>Uploads</h2><div id="list"></div></section>
+    </div>
+
+    <div id="tab-tv" class="hide">
+      <section class="card">
+        <h2>Name this TV</h2>
+        <div class="row"><input id="nameIn" type="text" maxlength="16" autocomplete="off" aria-label="TV name"><button id="saveName" class="ghost">Save</button></div>
+        <p class="msg" id="namemsg"></p>
+      </section>
+      <section class="card"><h2>About</h2><p class="sub" id="about"></p></section>
+    </div>
   </div>
 </main>
 
@@ -110,11 +169,14 @@ async function load() {
   $('space').textContent = hr(state.free_bytes) + ' free';
   const sel = $('channel'), keep = sel.value;
   sel.innerHTML = '';
-  for (const c of state.channels) sel.add(new Option(c.label + '  (' + c.count + ')', c.name));
+  for (const c of state.channels) if (c.kind !== 'youtube') sel.add(new Option(c.label + '  (' + c.count + ')', c.name));
   sel.add(new Option('New channel...', '__new__'));
   if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
   else if (!state.channels.length) sel.value = '__new__';
   $('newChannel').classList.toggle('hide', sel.value !== '__new__');
+  $('about').textContent = 'Tubeless ' + state.version + (state.youtube && state.youtube.available ? '  -  yt-dlp ' + (state.youtube.version || '') : '  -  YouTube channels need yt-dlp, which is not installed on this TV');
+  renderChannels();
+  if (ytChannel) { const c = state.channels.find(x => x.name === ytChannel); if (!c) showChannelList(); }
 }
 
 $('go').onclick = login;
@@ -214,6 +276,165 @@ function showAdvice(row, items) {
   const ul = row.querySelector('.adv'); ul.innerHTML = '';
   for (const a of items) { const li = document.createElement('li'); li.className = a.level; li.textContent = a.text; ul.appendChild(li); }
 }
+
+
+// ---- tabs ---------------------------------------------------------------------------------------------
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b));
+  for (const t of ['channels', 'upload', 'tv']) $('tab-' + t).classList.toggle('hide', t !== b.dataset.tab);
+});
+
+// ---- channels ------------------------------------------------------------------------------------------
+let ytChannel = null, ytData = null, ticks = new Set(), dirty = false, pollTimer = null, found = null;
+
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+function renderChannels() {
+  const box = $('channels'); box.textContent = '';
+  if (!state.channels.length) box.append(el('p', 'sub', 'No channels yet. Create one below, then add videos to it.'));
+  for (const c of state.channels) {
+    const row = el('div', 'chan'), left = el('div'), right = el('span', 'badge' + (c.kind === 'youtube' ? ' yt' : ''), c.kind === 'youtube' ? 'YouTube' : 'Folder');
+    left.append(el('div', 'nm', c.label));
+    let sub = c.count + ' video' + (c.count === 1 ? '' : 's');
+    if (c.kind === 'youtube') { const y = c.youtube; sub = y.done + ' on the TV' + (y.waiting ? ', ' + y.waiting + ' waiting' : '') + (y.error ? ', ' + y.error + ' with problems' : ''); }
+    left.append(el('div', 'sub2', sub));
+    row.append(left, right);
+    if (c.kind === 'youtube') row.onclick = () => openYt(c.name);
+    else row.onclick = () => { document.querySelector('#tabs [data-tab=upload]').click(); $('channel').value = c.name; };
+    box.append(row);
+  }
+}
+
+let newKind = 'folder';
+function openNew(kind) { newKind = kind; $('newbox').classList.remove('hide'); $('newlabel').textContent = kind === 'youtube' ? 'Name the YouTube channel (e.g. 3.cartoons)' : 'Name the folder channel (e.g. 1.simpsons)'; say($('newmsg'), ''); $('newname').value = ''; $('newname').focus(); }
+$('newFolder').onclick = () => openNew('folder');
+$('newYt').onclick = () => openNew('youtube');
+$('newgo').onclick = async () => {
+  const name = $('newname').value.trim(); if (!name) return say($('newmsg'), 'Type a name first.', 'bad');
+  try {
+    const r = await api('/api/channel', {method: 'POST', body: JSON.stringify({name, kind: newKind})});
+    $('newbox').classList.add('hide'); await load();
+    if (newKind === 'youtube') openYt(r.channel);
+  } catch (e) { say($('newmsg'), e.message, 'bad'); }
+};
+$('newname').addEventListener('keydown', e => { if (e.key === 'Enter') $('newgo').click(); });
+
+function showChannelList() { ytChannel = null; stopPoll(); $('yt').classList.add('hide'); $('chanlist').classList.remove('hide'); }
+$('ytback').onclick = () => { if (dirty && !confirm('You have unsaved changes. Leave without saving?')) return; dirty = false; showChannelList(); load().catch(() => {}); };
+
+async function openYt(name) {
+  ytChannel = name; dirty = false; found = null; $('found').classList.add('hide'); say($('ytfetchmsg'), ''); say($('ytsavemsg'), ''); $('yturl').value = '';
+  $('chanlist').classList.add('hide'); $('yt').classList.remove('hide');
+  const c = state.channels.find(x => x.name === name); $('ythead').textContent = c ? c.label : name;
+  await refreshYt(true); startPoll();
+}
+
+async function refreshYt(resetTicks) {
+  try { ytData = await api('/api/yt/channel?channel=' + enc(ytChannel)); } catch (e) { say($('ytsummary'), e.message, 'bad'); return; }
+  if (resetTicks || !dirty) ticks = new Set(ytData.items.filter(i => i.selected).map(i => i.id));
+  renderYt();
+}
+
+function fmtDur(s) { if (!s) return ''; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); }
+
+function renderYt() {
+  const box = $('ytitems'); box.textContent = '';
+  const items = ytData.items;
+  if (!items.length) box.append(el('p', 'sub', 'Nothing here yet. Paste a playlist or video link above.'));
+  let done = 0, waiting = 0, errors = 0;
+  for (const i of items) {
+    const row = el('div', 'item'), cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = ticks.has(i.id);
+    cb.onchange = () => { cb.checked ? ticks.add(i.id) : ticks.delete(i.id); dirty = true; $('ytsave').disabled = false; };
+    const t = el('div', 't'); t.append(el('div', '', i.title)); const meta = fmtDur(i.duration); if (meta) t.append(el('div', 'm', meta)); if (i.status === 'error' && i.error) t.append(el('div', 'm', i.error));
+    const label = (i.status === 'waiting' && ytData.mode === 'stream') ? 'From YouTube' : {done: 'On the TV', waiting: 'Waiting', error: 'Problem', off: ''}[i.status];
+    row.append(cb, t); if (label) row.append(el('span', 'chip ' + i.status, label));
+    box.append(row);
+    if (i.status === 'done') done++; else if (i.status === 'waiting') waiting++; else if (i.status === 'error') errors++;
+  }
+  $('ytoffline').checked = ytData.mode === 'download'; $('streamnote').classList.toggle('hide', ytData.mode === 'download');
+  say($('ytsummary'), !items.length ? '' : ytData.mode === 'stream' ? (waiting + done) + ' video' + (waiting + done === 1 ? '' : 's') + ' will play from YouTube' + (done ? ' (' + done + ' already on the TV)' : '')
+    : done + ' on the TV' + (waiting ? ', ' + waiting + ' waiting to download' : '') + (errors ? ', ' + errors + ' with problems' : ''));
+  $('ytsync').disabled = !(waiting || errors) || !state.youtube.available || ytData.mode !== 'download';
+  $('ytsync').classList.toggle('hide', ytData.mode !== 'download');
+  $('ytnotice').classList.toggle('hide', state.youtube.available);
+  $('ytnotice').textContent = state.youtube.available ? '' : 'yt-dlp is not installed on this TV, so videos cannot be downloaded. See the README.';
+  $('ytsave').disabled = !dirty;
+}
+
+$('ytoffline').onchange = async () => {
+  const mode = $('ytoffline').checked ? 'download' : 'stream';
+  try { await api('/api/yt/mode', {method: 'POST', body: JSON.stringify({channel: ytChannel, mode})}); await refreshYt(false); await load(); }
+  catch (e) { say($('ytsavemsg'), e.message, 'bad'); await refreshYt(false); }
+};
+
+$('ytsave').onclick = async () => {
+  const gone = ytData.items.filter(i => i.status === 'done' && !ticks.has(i.id)).length;
+  if (gone && !confirm('This removes ' + gone + ' downloaded video' + (gone === 1 ? '' : 's') + ' from the TV. Continue?')) return;
+  try { const r = await api('/api/yt/select', {method: 'POST', body: JSON.stringify({channel: ytChannel, selected: [...ticks]})}); dirty = false; say($('ytsavemsg'), 'Saved.' + (r.removed ? ' Removed ' + r.removed + ' from the TV.' : ''), 'ok'); await refreshYt(true); await load(); }
+  catch (e) { say($('ytsavemsg'), e.message, 'bad'); }
+};
+
+$('ytfetch').onclick = async () => {
+  const url = $('yturl').value.trim(); if (!url) return;
+  $('ytfetch').disabled = true; say($('ytfetchmsg'), 'Looking it up (this can take a few seconds)...'); $('found').classList.add('hide');
+  try { found = await api('/api/yt/resolve', {method: 'POST', body: JSON.stringify({url})}); found.url = url; showFound(); say($('ytfetchmsg'), found.skipped ? found.skipped + ' private or deleted video' + (found.skipped === 1 ? ' was' : 's were') + ' left out.' : ''); }
+  catch (e) { say($('ytfetchmsg'), e.message, 'bad'); }
+  $('ytfetch').disabled = false;
+};
+$('yturl').addEventListener('keydown', e => { if (e.key === 'Enter') $('ytfetch').click(); });
+
+let foundTicks = new Set();
+function showFound() {
+  $('found').classList.remove('hide'); $('foundtitle').textContent = found.title + '  -  ' + found.entries.length + ' video' + (found.entries.length === 1 ? '' : 's');
+  const have = new Set(ytData.items.map(i => i.id));
+  foundTicks = new Set(found.entries.filter(e => !have.has(e.id)).map(e => e.id));
+  const box = $('foundlist'); box.textContent = '';
+  for (const e of found.entries) {
+    const row = el('div', 'item'), cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = foundTicks.has(e.id); cb.disabled = have.has(e.id);
+    cb.onchange = () => { cb.checked ? foundTicks.add(e.id) : foundTicks.delete(e.id); updateFoundButton(); };
+    cb.dataset.id = e.id;
+    const t = el('div', 't'); t.append(el('div', '', e.title)); const m = fmtDur(e.duration); if (m || have.has(e.id)) t.append(el('div', 'm', (m || '') + (have.has(e.id) ? (m ? '  -  ' : '') + 'already in this channel' : '')));
+    row.append(cb, t); box.append(row);
+  }
+  updateFoundButton();
+}
+function updateFoundButton() { const n = foundTicks.size; $('foundadd').textContent = n ? 'Add ' + n + ' video' + (n === 1 ? '' : 's') + ' to this channel' : 'Nothing selected'; $('foundadd').disabled = !n; }
+$('foundall').onclick = () => { document.querySelectorAll('#foundlist input:not(:disabled)').forEach(c => { c.checked = true; foundTicks.add(c.dataset.id); }); updateFoundButton(); };
+$('foundnone').onclick = () => { document.querySelectorAll('#foundlist input:not(:disabled)').forEach(c => { c.checked = false; }); foundTicks.clear(); updateFoundButton(); };
+$('foundadd').onclick = async () => {
+  $('foundadd').disabled = true;
+  try {
+    const r = await api('/api/yt/add', {method: 'POST', body: JSON.stringify({channel: ytChannel, url: found.url, selected: [...foundTicks, ...ytData.items.filter(i => ticks.has(i.id)).map(i => i.id)]})});
+    const n = foundTicks.size;
+    $('found').classList.add('hide'); $('yturl').value = ''; say($('ytfetchmsg'), 'Added ' + n + ' video' + (n === 1 ? '' : 's') + (r.added > n ? ' (the other ' + (r.added - n) + ' from the list are in the channel, unticked)' : '') + '. Tap "Download now" to fetch them.', 'ok');
+    dirty = false; await refreshYt(true); await load();
+  } catch (e) { say($('ytfetchmsg'), e.message, 'bad'); $('foundadd').disabled = false; }
+};
+
+$('ytsync').onclick = async () => {
+  if (dirty && !confirm('Save your changes first? Tap Cancel, then Save changes.')) return;
+  try { const r = await api('/api/yt/sync', {method: 'POST', body: JSON.stringify({channel: ytChannel})}); say($('ytsavemsg'), r.queued ? 'Downloading ' + r.queued + ' video' + (r.queued === 1 ? '' : 's') + '. Keep this page open, and the TV on.' : 'Everything is already on the TV.', 'ok'); poll(); }
+  catch (e) { say($('ytsavemsg'), e.message, 'bad'); }
+};
+$('ytstop').onclick = async () => { try { await api('/api/yt/cancel', {method: 'POST', body: '{}'}); poll(); } catch (e) {} };
+$('ytdelete').onclick = async () => {
+  if (!confirm('Remove this channel and every video downloaded for it from the TV?')) return;
+  try { await api('/api/channel/delete', {method: 'POST', body: JSON.stringify({name: ytChannel})}); dirty = false; showChannelList(); await load(); }
+  catch (e) { say($('ytsavemsg'), e.message, 'bad'); }
+};
+
+function startPoll() { stopPoll(); pollTimer = setInterval(poll, 2000); }
+function stopPoll() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
+async function poll() {
+  if (!ytChannel) return;
+  try {
+    const p = await api('/api/yt/progress'), working = p.working;
+    $('ytbarwrap').classList.toggle('hide', !working); $('ytnow').classList.toggle('hide', !working); $('ytstop').classList.toggle('hide', !working);
+    if (p.active) { $('ytbar').style.width = Math.round(100 * p.active.progress) + '%'; $('ytnow').textContent = (p.active.stage === 'joining' ? 'Finishing: ' : 'Downloading: ') + p.active.title + (p.queued ? '  (+' + p.queued + ' waiting)' : ''); }
+    if (working !== lastWorking || p.finished !== lastFinished) { lastWorking = working; lastFinished = p.finished; await refreshYt(false); try { await load(); } catch (e) {} }
+  } catch (e) {}
+}
+let lastWorking = false, lastFinished = 0;
 
 if (token) load().catch(() => showLogin());
 </script>

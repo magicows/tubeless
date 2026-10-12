@@ -70,6 +70,28 @@ shows an address, a QR code and a 4-digit PIN; open it on your phone or laptop (
 channel and send files. The same page renames the TV. Hold the TV's screen to leave. Copying over SFTP/scp into
 `~/videos/<channel>/` works too.
 
+## YouTube channels (optional)
+
+A channel can be made of YouTube playlists and single videos. Install the extra pieces once:
+
+```bash
+sudo sh install.sh --with-youtube        # ffmpeg, and yt-dlp from PyPI into ~/.local/share/tubeless/ytdlp
+```
+
+Then open the phone page (Settings > Upload videos), choose **+ YouTube channel**, paste a playlist or video link, tick the
+videos you want, and add more playlists or single videos to the same channel whenever you like.
+
+* **Download to the TV** (the default): the TV fetches the videos at 480p while you wait, then plays them like any other
+  video, with no Wi-Fi needed. Downloads run only while the phone page is open.
+* **Untick it to stream** instead: nothing is stored; each video loads from YouTube when its turn comes (about 10 seconds on a
+  Zero 2 W) and needs Wi-Fi. If a video can't be played the TV says so and moves on; fix or delete the channel on the phone page.
+* Public and unlisted playlists only; there is no YouTube sign-in. YouTube keeps changing, so update yt-dlp now and then:
+  `python3 -m tubeless youtube update` (`youtube status` shows the version).
+
+This uses [yt-dlp](https://github.com/yt-dlp/yt-dlp), which Tubeless does not include. Downloading from YouTube is against
+YouTube's terms of service and this route doesn't show YouTube's ads, so it is an opt-in extra for your own use; you are
+responsible for how you use it.
+
 ## Make it yours
 
 Every TV has its own name, shown in the menu title and on the boot screen (up to 16 characters):

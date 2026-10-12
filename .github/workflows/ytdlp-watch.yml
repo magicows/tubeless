@@ -1,0 +1,49 @@
+name: yt-dlp watch
+
+# YouTube changes often and yt-dlp follows. Every day, try the newest yt-dlp against what Tubeless relies on
+# (the format choice and the command-line options, with no network needed). If something no longer works, open an
+# issue, so the fix is made before a TV owner finds out. TVs install yt-dlp from PyPI, so they get new versions anyway
+# (python3 -m tubeless youtube update).
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt
+      - run: pip install --upgrade yt-dlp
+      - name: Record the yt-dlp version
+        id: ver
+        run: echo "version=$(python -m yt_dlp --version)" >> "$GITHUB_OUTPUT"
+      - name: Run the YouTube tests against it
+        id: tests
+        run: python -m pytest -q tests/test_ytdlp_contract.py tests/test_youtube.py tests/test_streaming.py tests/test_companion.py
+      - name: Can it still read a public playlist? (informational: GitHub's servers are sometimes blocked by YouTube)
+        continue-on-error: true
+        run: python -m yt_dlp --no-update --flat-playlist -J "https://www.youtube.com/playlist?list=PLa1F2ddGya_8NhFM-rx_xh5SlIGbHyrZZ" | head -c 300
+      - name: Open an issue if the tests failed
+        if: failure() && steps.tests.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          existing=$(gh issue list --label ytdlp-watch --state open --json number --jq '.[0].number // empty')
+          body="The daily check failed with yt-dlp $VERSION. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh label create ytdlp-watch --color d93f0b --description "yt-dlp changed and YouTube channels need attention" 2>/dev/null || true
+            gh issue create --label ytdlp-watch --title "yt-dlp $VERSION breaks YouTube channels" --body "$body"
+          fi

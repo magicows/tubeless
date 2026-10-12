@@ -26,7 +26,7 @@ import threading
 import time
 import zlib
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from .config import Config, expand
 from .hardware import Hardware
@@ -114,11 +114,19 @@ class MpvPlayer:
                 "--input-ipc-server=" + self.cfg.mpv_socket,
                 "--loop-playlist=no",
                 "--msg-level=all=warn",
-            ], stdout=out, stderr=subprocess.STDOUT)
+            ] + self._youtube_options(), stdout=out, stderr=subprocess.STDOUT)
         finally:
             if out is not subprocess.DEVNULL:
                 out.close()
         log.info("started mpv PID %s", self.proc.pid)
+
+    def _youtube_options(self) -> list:
+        """So a YouTube link in a playlist is played (as 480p H.264) by the yt-dlp the user installed."""
+        from .youtube import FORMAT_JOINED, FORMAT_SINGLE, find_ytdlp
+        path = find_ytdlp(getattr(self.cfg, "ytdlp_path", ""))
+        if not path:
+            return ["--ytdl=no"]
+        return ["--ytdl=yes", f"--ytdl-format={FORMAT_JOINED}/{FORMAT_SINGLE}", f"--script-opts=ytdl_hook-ytdl_path={path}"]
 
     def _open_log(self):
         """Append to mpv.log, starting over once it passes 512 KB."""
@@ -181,8 +189,11 @@ class FakePlayer:
 
     def __init__(self, short_static: str, long_static: str,
                  duration_of: Callable[[str], float] = default_duration,
-                 clock: Callable[[], float] = time.monotonic, speed: float = 1.0):
+                 clock: Callable[[], float] = time.monotonic, speed: float = 1.0, url_delay: float = 0.0,
+                 url_fail: Tuple[str, ...] = ()):
         self.short_static, self.long_static = short_static, long_static
+        self.url_delay, self.url_fail = url_delay, tuple(url_fail)     # network entries load slowly; some never do
+        self._stall_until, self._will_fail = 0.0, False
         self.duration_of = duration_of
         self.clock = clock
         self.speed = speed
@@ -205,10 +216,31 @@ class FakePlayer:
             return 3.2
         return self.duration_of(path)
 
+    def _arm(self) -> None:
+        """Entering a playlist entry: a network address has to load first, like mpv resolving a YouTube link."""
+        cur = self.playlist[self.pos] if self.playlist else ""
+        if "://" in cur:
+            self._stall_until, self._will_fail = self.clock() + self.url_delay, any(k in cur for k in self.url_fail)
+        else:
+            self._stall_until, self._will_fail = 0.0, False
+
     def _tick(self) -> None:
         now = self.clock()
         if self._alive and self.playlist and not self.paused:
-            self.time_pos += (now - self._last) * self.speed
+            dt = (now - self._last) * self.speed
+            if self._stall_until:
+                if now < self._stall_until:
+                    dt = 0.0                                       # still loading
+                else:
+                    self._stall_until = 0.0
+                    if self._will_fail:                            # couldn't be opened: mpv moves on to the next entry
+                        if self.pos + 1 >= len(self.playlist):
+                            self._alive, self._ended = False, True
+                        else:
+                            self.pos, self.time_pos = self.pos + 1, 0.0
+                            self._arm()
+                        dt = 0.0
+            self.time_pos += dt
             while self._alive and self.time_pos >= self._dur(self.playlist[self.pos]):
                 self.time_pos -= self._dur(self.playlist[self.pos])
                 if self.pos + 1 >= len(self.playlist):
@@ -217,6 +249,7 @@ class FakePlayer:
                     self.time_pos = self._dur(self.playlist[self.pos])
                     break
                 self.pos += 1
+                self._arm()
         self._last = now
 
     # --- the Player interface ------------------------------------------------------
@@ -227,6 +260,7 @@ class FakePlayer:
             self._ended = False
             self.paused = False
             self._last = self.clock()
+            self._arm()
 
     def _load(self, path: str) -> None:
         if str(path).endswith(".m3u"):
@@ -235,6 +269,7 @@ class FakePlayer:
         else:
             self.playlist = [str(path)]
         self.pos, self.time_pos = 0, 0.0
+        self._arm()
 
     def stop(self) -> None:
         with self._lock:
@@ -265,7 +300,7 @@ class FakePlayer:
             if prop == "path":
                 return self.playlist[self.pos] if self.playlist else None
             if prop == "time-pos":
-                return self.time_pos
+                return None if self._stall_until else self.time_pos
             if prop == "duration":
                 return self._dur(self.playlist[self.pos]) if self.playlist else None
             if prop == "core-idle":
@@ -285,6 +320,7 @@ class FakePlayer:
                     self.paused = bool(value)
                 elif prop == "playlist-pos":
                     self.pos, self.time_pos = max(0, min(int(value), len(self.playlist) - 1)), 0.0
+                    self._arm()
                 elif prop == "time-pos":
                     self.time_pos = float(value)
             elif name == "cycle" and args[1] == "pause":
@@ -295,6 +331,7 @@ class FakePlayer:
                 self.time_pos = float(args[1]) if (len(args) < 3 or args[2] == "absolute") else self.time_pos + float(args[1])
             elif name == "playlist-next":
                 self.pos, self.time_pos = min(self.pos + 1, len(self.playlist) - 1), 0.0
+                self._arm()
             return None
 
     def set_overlay(self, raw: bytes, w: int, h: int) -> None:

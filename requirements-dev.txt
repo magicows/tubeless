@@ -1,0 +1,5 @@
+# What the tests need on a normal computer (on the TV itself these come from apt: see tubeless/installer.py PACKAGES).
+pytest
+numpy
+Pillow
+psutil

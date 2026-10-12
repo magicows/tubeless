@@ -22,9 +22,11 @@ from typing import Dict, List, Optional
 
 from .config import expand
 from .state import Store
+from .youtube import ChannelFile, valid_id
 
 VIDEO_EXTS = (".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm")
 _NUMBERED = re.compile(r"^(\d+)\.(.*)$")
+STREAM_PREFIX = "yt-"                  # a video that is played from YouTube instead of from a file: "yt-<11 character id>"
 
 
 def _order_key(name: str):
@@ -62,17 +64,44 @@ class Library:
             for f in files:
                 if f.lower().endswith(VIDEO_EXTS) and not f.startswith("."):
                     found.append(os.path.relpath(os.path.join(dirpath, f), channel.path).replace(os.sep, "/"))
+        found += self._streamed(channel, found)
         return sorted(found)
+
+    @staticmethod
+    def _streamed(channel: Channel, on_disk: List[str]) -> List[str]:
+        """A YouTube channel set to "stream": the ticked videos that aren't downloaded are played from YouTube."""
+        if not ChannelFile.exists(Path(channel.path)):
+            return []
+        cf = ChannelFile.load(Path(channel.path))
+        if cf.mode != "stream":
+            return []
+        have = set(on_disk)
+        return [STREAM_PREFIX + i["id"] for i in cf.items
+                if i.get("selected") and not (i.get("file") and i["file"] in have)]
 
     def has_videos(self, channel: Channel) -> bool:
         for _, dirnames, files in os.walk(channel.path):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
             if any(f.lower().endswith(VIDEO_EXTS) and not f.startswith(".") for f in files):
                 return True
-        return False
+        return bool(self._streamed(channel, []))
 
     def abspath(self, channel: Channel, rel: str) -> str:
+        """Where to play a video from: its file, or the YouTube address for a streamed one."""
+        if rel.startswith(STREAM_PREFIX) and valid_id(rel[len(STREAM_PREFIX):]):
+            return "https://www.youtube.com/watch?v=" + rel[len(STREAM_PREFIX):]
         return os.path.join(channel.path, rel)
+
+    @staticmethod
+    def is_stream(rel: Optional[str]) -> bool:
+        return bool(rel) and rel.startswith(STREAM_PREFIX) and valid_id(rel[len(STREAM_PREFIX):])
+
+    def title_of(self, channel: Channel, rel: str) -> str:
+        if self.is_stream(rel) and ChannelFile.exists(Path(channel.path)):
+            item = ChannelFile.load(Path(channel.path)).find(rel[len(STREAM_PREFIX):])
+            if item:
+                return item["title"]
+        return os.path.splitext(os.path.basename(rel))[0]
 
     def next_playable(self, start: int, step: int) -> Optional[int]:
         """Index of the first channel at/after `start` (moving by `step`, wrapping) that has videos."""

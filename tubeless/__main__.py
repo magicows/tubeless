@@ -14,6 +14,7 @@ import logging.handlers
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -82,6 +83,23 @@ def make_demo_library(root: Path) -> None:
             f.write_bytes(b"")
 
 
+def cmd_youtube(args) -> int:
+    """Check, or update, the yt-dlp that YouTube channels use. It needs updating now and then: YouTube keeps changing."""
+    from .youtube import YtDlp, find_ytdlp
+    path = find_ytdlp(Config.load(args.config).ytdlp_path)
+    if args.action == "status":
+        if not path:
+            print("yt-dlp is not installed. Install it with:  sudo sh install.sh --with-youtube")
+            return 1
+        print(f"yt-dlp {YtDlp(path).version()}  ({path})")
+        return 0
+    venv_pip = Path(path).parent / "pip" if path else None
+    if not venv_pip or not venv_pip.exists():
+        print("This yt-dlp wasn't installed by Tubeless (no pip next to it), so update it the way you installed it.")
+        return 1
+    return subprocess.call([str(venv_pip), "install", "--upgrade", "yt-dlp"])
+
+
 def cmd_sim(args) -> int:
     from .app import App
     from .hal import make_backend
@@ -120,7 +138,15 @@ def cmd_sim(args) -> int:
         player = FakePlayer(cfg.short_static, cfg.long_static, speed=args.speed)
         from .wifi import FakeWifi
         wifi = FakeWifi(ip=None, saved=False) if args.no_network else FakeWifi(ip="192.168.1.50", saved=True)
-        app = App(cfg, hw, backend, player, wifi=wifi)
+        ytdlp = None
+        if args.fake_youtube:
+            from .youtube import Entry, FakeYtDlp, Listing
+            titles = ["The Pilot", "Rainy Day", "The Big Game", "Road Trip", "The One With The Cat", "Halloween Special",
+                      "Snow Day", "Finale (a very long title to see how the page wraps it onto a second line)"]
+            ytdlp = FakeYtDlp({"PLdemodemodemo1": Listing("Demo cartoons", "playlist",
+                                                          [Entry("demo%07d" % i, t, 300.0 + 20 * i) for i, t in enumerate(titles)])},
+                              delay=3.0)
+        app = App(cfg, hw, backend, player, wifi=wifi, ytdlp=ytdlp)
         app.config_path = work / "config.json"
         app.switch_delay = 3.0 / max(args.speed, 1)
         app.start_background()
@@ -209,6 +235,7 @@ def main(argv=None) -> int:
     p.add_argument("--speed", type=float, default=1.0, help="make fake time run faster")
     p.add_argument("--menu-timeout", type=float, default=5.0)
     p.add_argument("--no-network", action="store_true", help="pretend the TV has no Wi-Fi (shows Wi-Fi setup; password for the fake network HomeWiFi is 'correct horse')")
+    p.add_argument("--fake-youtube", action="store_true", help="pretend yt-dlp works (playlist https://www.youtube.com/playlist?list=PLdemodemodemo1)")
     p.add_argument("--greeting", default="Wake up, couch potato...")
     p.add_argument("--boot-seconds", type=float, default=25.0)
     p.set_defaults(func=cmd_sim)
@@ -227,6 +254,11 @@ def main(argv=None) -> int:
     p.add_argument("--config", help="config file (default ~/.config/tubeless/config.json)")
     p.add_argument("--restart", action="store_true", help="after `set`, restart the TV service")
     p.set_defaults(func=cmd_config)
+
+    p = sub.add_parser("youtube", help="check or update yt-dlp (used by YouTube channels)")
+    p.add_argument("action", choices=["status", "update"])
+    p.add_argument("--config")
+    p.set_defaults(func=cmd_youtube)
 
     p = sub.add_parser("version")
     p.set_defaults(func=lambda a: print(__version__) or 0)
