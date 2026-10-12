@@ -112,10 +112,12 @@ def test_swiping_scrolls_the_menu_and_taps_never_do(tmp_path):
 
 
 def test_settings_survive_a_restart(tmp_path):
-    r = Rig(tmp_path)
+    r = Rig(tmp_path, menu_timeout=30)                                     # a slow machine must not see the menu hide mid-test
     r.open_menu()
     r.tap_row(3)                                                           # brightness 100 -> 25
+    assert wait_for(lambda: r.state["brightness"] == 25)
     r.tap_row(4)                                                           # settings
+    assert wait_for(lambda: r.app.menu.page == "settings")
     r.tap_row(1)                                                           # shuffle off
     assert wait_for(lambda: r.state["shuffle"] is False)
     r.tap_row(4)                                                           # auto-dim

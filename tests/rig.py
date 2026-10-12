@@ -39,7 +39,7 @@ class Rig:
         kwargs = dict(videos_dir=str(videos), data_dir=str(tmp_path / "data"),
                       static_short="/static_short.mp4", static_long="/static_long.mp4",
                       legacy_state_file=str(tmp_path / "no-legacy.json"),
-                      menu_timeout=2.0, long_press=0.25, web_port=0, setup_port=0)
+                      menu_timeout=5.0, long_press=0.25, web_port=0, setup_port=0)
         kwargs.update(cfg_over)
         self.cfg = Config(**kwargs)
         if not fresh:                                      # an existing install (no first-run wizard)
