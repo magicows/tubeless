@@ -19,7 +19,7 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
 * **Shuffle that doesn't repeat.** Each channel remembers its shuffled order and works through it. New videos are slotted in
   among the ones you haven't seen.
 * **Resume.** It returns to the right episode and the right place in it, even after you pull the plug.
-* **No keyboard on the TV.** Everything you would type (Wi-Fi password, TV name, YouTube links) goes through a web page on your phone.
+* **No keyboard on the TV.** The Wi-Fi password, the TV name and YouTube links all go through a web page on your phone.
 * **YouTube channels** (optional): playlists and single videos, downloaded to the TV or streamed.
 * **Menu:** pause, next and previous, brightness, channels, and under Settings: shuffle, sleep timer, auto-dim,
   touch calibration, upload, Wi-Fi setup, shut down.
@@ -97,7 +97,7 @@ This uses NetworkManager, so it needs Raspberry Pi OS Bookworm or Trixie. It isn
 You need the build from the original guide (see [Credits](#credits)): a Pi Zero 2 W, the Waveshare 2.8" DPI LCD, a speaker and the wiring.
 
 1. Flash **Raspberry Pi OS Lite (32-bit, Trixie)** with the Raspberry Pi Imager. In its settings set a hostname and user, your Wi-Fi
-   and Wi-Fi country, and turn on SSH, ideally with your public key.
+   and Wi-Fi country, and turn on SSH with your public key.
 2. Boot the Pi and SSH in. The screen may stay dark until the installer has set up the display. Get the code and run the installer:
 
    ```
@@ -116,7 +116,7 @@ You need the build from the original guide (see [Credits](#credits)): a Pi Zero 
    * edits `config.txt` and `cmdline.txt`, showing the changes and keeping backups;
    * installs the services and a narrow `sudo` rule: power off, reboot, restart Tubeless, and one root-owned Wi-Fi helper.
 
-   It is safe to run again.
+   Run it again any time; it leaves anything already correct alone.
 3. Reboot. The first start walks you through calibrating the touch screen. With no videos yet the TV offers the upload page.
 
 To update a TV from your computer later: `tools/deploy.sh <ssh-host>`.
@@ -143,7 +143,7 @@ The boot greeting, folders and static clips are settings too. Themes (colours, b
 | Audio | mono PWM speaker and amp on GPIO 19 (`dtoverlay=audremap,pins_18_19`) |
 | OS | Raspberry Pi OS Lite 32-bit. Trixie is tested end to end. Bullseye (the original build's OS) plays videos, but uploads, Wi-Fi setup and YouTube are only tested on Trixie. |
 
-Everything specific to this build lives in [`tubeless/hardware.py`](tubeless/hardware.py). Support for another screen means adding a
+All settings specific to this build are in [`tubeless/hardware.py`](tubeless/hardware.py). Support for another screen means adding a
 profile there. Pull requests are welcome, but the project only promises the build above.
 
 ## Try it without a Pi
