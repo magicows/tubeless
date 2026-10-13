@@ -268,6 +268,32 @@ def test_auto_dim_dims_then_a_touch_restores_without_acting(rig):
     assert rig.state["paused"] is False
 
 
+def test_a_paused_tv_dims_by_itself_but_a_playing_one_does_not(rig):
+    rig.app.last_activity = time.time() - 61                               # a minute untouched, and the default pause-dim is a minute
+    time.sleep(0.4)
+    assert not rig.state["dimmed"]                                         # playing, auto-dim off: stays bright
+    rig.tap()                                                              # pause
+    assert wait_for(lambda: rig.state["paused"])
+    rig.app.last_activity = time.time() - 61
+    assert wait_for(lambda: rig.state["dimmed"], timeout=3)
+    assert rig.backlight.percent == 25
+    rig.tap()                                                              # wakes without un-pausing
+    assert wait_for(lambda: not rig.state["dimmed"] and rig.backlight.percent == 100)
+    assert rig.state["paused"] is True
+
+
+def test_the_pause_dim_can_be_switched_off(tmp_path):
+    r = Rig(tmp_path, pause_dim_seconds=0)
+    try:
+        r.tap()
+        assert wait_for(lambda: r.state["paused"])
+        r.app.last_activity = time.time() - 3600
+        time.sleep(0.5)
+        assert not r.state["dimmed"]
+    finally:
+        r.stop()
+
+
 def test_shutdown_needs_a_second_tap_to_confirm(rig):
     rig.open_menu()
     rig.tap_row(4)                                                         # Settings

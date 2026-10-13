@@ -378,10 +378,17 @@ class App:
             self.sleep_deadline, self.sleep_timer_min = None, 0
             self.enter_standby()
             return
-        if (self.mode == "play" and self.auto_dim_min and not self.dimmed
-                and now - self.last_activity >= self.auto_dim_min * 60):
+        if self.mode == "play" and not self.dimmed and self._should_dim(now):
             self.dimmed = True
             self.backlight.set(min(self.brightness, DIM_LEVEL))
+
+    def _should_dim(self, now: float) -> bool:
+        """Untouched for long enough: a paused picture dims soon (a still image burns the eye, and the battery);
+        a playing one only dims if the user set Auto-dim."""
+        idle = now - self.last_activity
+        if self.auto_dim_min and idle >= self.auto_dim_min * 60:
+            return True
+        return bool(self.cfg.pause_dim_seconds) and idle >= self.cfg.pause_dim_seconds and bool(self.player.get("pause"))
 
     # ─────────────────────────────────────────
     #  The menu

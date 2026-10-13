@@ -55,6 +55,7 @@ class Config:
 
     # Touch feel.
     menu_timeout: float = 5.0
+    pause_dim_seconds: int = 60           # a paused TV dims after this long untouched (0 = never); the auto-dim setting covers playing
     long_press: float = 1.0
     touch_move_px: float = 25.0
     swipe_min_px: float = 70.0

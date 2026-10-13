@@ -23,6 +23,8 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
 * **YouTube channels** (optional): playlists and single videos, downloaded to the TV or streamed.
 * **Menu:** pause, next and previous, brightness, channels, and under Settings: shuffle, sleep timer, auto-dim,
   touch calibration, upload, Wi-Fi setup, shut down.
+* **Dimming.** A paused picture dims after a minute untouched. Auto-dim (2, 5 or 10 minutes, or off) dims a playing one. A touch
+  wakes the screen and does nothing else.
 * **Boot screen** with a live checklist of what is starting up, and a name and greeting you choose.
 
 ## Get videos onto the TV
@@ -119,7 +121,8 @@ You need the build from the original guide (see [Credits](#credits)): a Pi Zero 
    Run it again any time; it leaves anything already correct alone.
 3. Reboot. The first start walks you through calibrating the touch screen. With no videos yet the TV offers the upload page.
 
-To update a TV from your computer later: `tools/deploy.sh <ssh-host>`.
+To update a TV from your computer later: `tools/deploy.sh <ssh-host>`. Moving an existing SimpTV over? See
+[docs/migrate-from-simptv.md](docs/migrate-from-simptv.md).
 
 ## Make it yours
 

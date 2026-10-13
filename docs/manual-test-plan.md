@@ -53,7 +53,8 @@ ssh <tv> 'tail -f ~/.local/share/tubeless/tubeless.log'
 
 1. **Settings -> Auto-dim 2 min**, leave it alone: after about two minutes the screen dims. **Touch it**: it brightens and
    *nothing else happens* (no pause, no skip). Set it back to Off if you like.
-2. **Settings -> Sleep timer 15 min** and walk away: after 15 minutes the screen turns off and the video pauses. A touch wakes it
+2. **Pause** the video and leave it alone: after a minute the screen dims. **Touch it**: it brightens and stays paused.
+3. **Settings -> Sleep timer 15 min** and walk away: after 15 minutes the screen turns off and the video pauses. A touch wakes it
    and it carries on, again without that touch doing anything else.
 
 ## 7. Safe shutdown
