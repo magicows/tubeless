@@ -186,6 +186,20 @@ class Hooks:
     def reset_standby(self):
         self.standby = None
 
+    def update_status(self):
+        return {"current": "0.1.0", "state": "idle"}
+
+    def update_check(self):
+        return {"current": "0.1.0", "latest": "0.2.0", "available": True, "state": "idle"}
+
+    def update_apply(self):
+        if getattr(self, "no_update", False):
+            raise ValueError("This TV runs from a git checkout.")
+        return {"state": "working"}
+
+    def update_rollback(self):
+        raise ValueError("There is no previous version to go back to.")
+
 
 @pytest.fixture
 def server(tmp_path):
@@ -310,3 +324,16 @@ def test_standby_picture_can_be_read_replaced_and_reset(server):
     assert call(server, "PUT", "/api/standby", token=token, raw=b"not a picture")[0] == 400
     assert call(server, "POST", "/api/standby/reset", {}, token=token)[0] == 200
     assert server.hooks.standby is None
+
+
+def test_update_routes_need_the_pin_and_pass_hook_errors_to_the_page(server):
+    for method, path in (("GET", "/api/update"), ("POST", "/api/update/check"), ("POST", "/api/update/apply")):
+        assert call(server, method, path, {} if method == "POST" else None)[0] == 401
+    token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
+    assert call(server, "GET", "/api/update", token=token)[1]["current"] == "0.1.0"
+    assert call(server, "POST", "/api/update/check", {}, token=token)[1]["available"] is True
+    assert call(server, "POST", "/api/update/apply", {}, token=token)[1] == {"state": "working"}
+    server.hooks.no_update = True
+    code, body = call(server, "POST", "/api/update/apply", {}, token=token)[:2]
+    assert code == 400 and "git checkout" in body["error"]
+    assert call(server, "POST", "/api/update/rollback", {}, token=token)[0] == 400

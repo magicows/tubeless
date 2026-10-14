@@ -137,6 +137,13 @@
         <input id="standbyFile" type="file" accept="image/*" class="hide">
         <p class="msg" id="standbymsg"></p>
       </section>
+      <section class="card">
+        <h2>Updates</h2>
+        <p class="sub" id="updline"></p>
+        <pre id="updnotes" class="hide" style="white-space:pre-wrap;font:inherit;font-size:13px;max-height:180px;overflow:auto;margin:8px 0"></pre>
+        <div class="row"><button id="updCheck" class="ghost">Check for updates</button><button id="updApply" class="hide">Update now</button><button id="updBack" class="ghost hide"></button></div>
+        <p class="msg" id="updmsg"></p>
+      </section>
       <section class="card"><h2>About</h2><p class="sub" id="about"></p></section>
     </div>
   </div>
@@ -189,6 +196,7 @@ async function load() {
   $('about').textContent = 'Tubeless ' + state.version + (state.youtube && state.youtube.available ? '  -  yt-dlp ' + (state.youtube.version || '') : '  -  YouTube channels need yt-dlp, which is not installed on this TV');
   renderChannels();
   loadStandby();
+  if (!updTimer) loadUpdate();
   if (ytChannel) { const c = state.channels.find(x => x.name === ytChannel); if (!c) showChannelList(); }
 }
 
@@ -214,6 +222,36 @@ $('standbyReset').onclick = async () => {
   try { await api('/api/standby/reset', {method: 'POST', body: '{}'}); say($('standbymsg'), 'Back to the original.', 'ok'); await load(); }
   catch (e) { say($('standbymsg'), e.message, 'bad'); }
 };
+
+let updTimer = null;
+function renderUpdate(u) {
+  const canUpdate = !u.can_update;
+  $('updline').textContent = 'Tubeless ' + u.current + (u.latest ? (u.available ? '  -  version ' + u.latest + ' is available' : '  -  you have the latest version') : '');
+  $('updnotes').textContent = u.available ? (u.notes || '') : '';
+  $('updnotes').classList.toggle('hide', !(u.available && u.notes));
+  $('updApply').classList.toggle('hide', !(u.available && canUpdate && u.state !== 'working' && u.state !== 'restarting'));
+  $('updBack').classList.toggle('hide', !(u.can_rollback && canUpdate && u.state !== 'working' && u.state !== 'restarting'));
+  if (u.previous) $('updBack').textContent = 'Go back to ' + u.previous;
+  $('updCheck').disabled = u.state === 'working' || u.state === 'restarting';
+  if (u.state === 'working') say($('updmsg'), (u.step || 'Working') + '... keep this page open.', '');
+  else if (u.state === 'restarting') say($('updmsg'), (u.rolled_back ? 'Went back to ' : 'Updated to ') + u.version + '. The TV is restarting and will go back to playing; open the upload page again from Settings when you want it.' + (u.system_changed ? ' This release also changes the TV\'s system files: connect by SSH and run  sudo sh ~/tubeless/install.sh  to finish.' : ''), 'ok');
+  else if (u.state === 'error') say($('updmsg'), u.error, 'bad');
+  else if (u.can_update) say($('updmsg'), u.can_update, '');
+  else say($('updmsg'), '', '');
+  if ((u.state === 'working') && !updTimer) updTimer = setInterval(loadUpdate, 1500);
+  if (u.state !== 'working' && updTimer) { clearInterval(updTimer); updTimer = null; }
+}
+async function loadUpdate() {
+  try { renderUpdate(await api('/api/update')); }
+  catch (e) { if (updTimer) { clearInterval(updTimer); updTimer = null; say($('updmsg'), 'The TV is restarting with the new version. Open the upload page again from Settings when you want it.', 'ok'); } }
+}
+async function updCall(path) {
+  try { const r = await api(path, {method: 'POST', body: '{}'}); if (path.endsWith('apply')) setTimeout(loadUpdate, 300); else renderUpdate(r); }
+  catch (e) { say($('updmsg'), e.message, 'bad'); }
+}
+$('updCheck').onclick = () => { say($('updmsg'), 'Checking...', ''); updCall('/api/update/check'); };
+$('updApply').onclick = () => { if (confirm('Install the update now? The TV restarts afterwards.')) updCall('/api/update/apply'); };
+$('updBack').onclick = () => { if (confirm('Go back to the previous version? The TV restarts afterwards.')) updCall('/api/update/rollback'); };
 
 $('go').onclick = login;
 $('pin').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });

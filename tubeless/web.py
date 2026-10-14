@@ -231,6 +231,7 @@ class WebServer:
         standby_path() -> str                 the picture shown while the player restarts
         set_standby(data: bytes) -> None      raises ValueError("why not")
         reset_standby() -> None               back to the picture that ships with Tubeless
+        update_status() / update_check() / update_apply() / update_rollback() -> dict     (ValueError("why not"))
     """
 
     def __init__(self, manager: UploadManager, session: Session, hooks, host: str = "0.0.0.0", port: int = 8080,
@@ -332,6 +333,9 @@ class WebServer:
                             if ch["name"] in sums:
                                 ch["youtube"] = sums[ch["name"]]
                         self._json(200, state)
+                elif route == "/api/update":
+                    if self._authed():
+                        self._json(200, server.hooks.update_status())
                 elif route == "/api/standby":
                     if self._authed():
                         try:
@@ -376,6 +380,15 @@ class WebServer:
                         return
                     try:
                         self._json(200, {"name": server.hooks.set_name(str(data.get("name", "")))})
+                    except ValueError as e:
+                        self._fail(400, str(e))
+                elif route in ("/api/update/check", "/api/update/apply", "/api/update/rollback"):
+                    if not self._authed():
+                        return
+                    call = {"check": server.hooks.update_check, "apply": server.hooks.update_apply,
+                            "rollback": server.hooks.update_rollback}[route.rsplit("/", 1)[1]]
+                    try:
+                        self._json(200, call())
                     except ValueError as e:
                         self._fail(400, str(e))
                 elif route == "/api/standby/reset":

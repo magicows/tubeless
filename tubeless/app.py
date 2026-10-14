@@ -15,6 +15,7 @@ import random
 import socket
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 from . import qr as qrcodes
@@ -27,6 +28,7 @@ from .menu import AUTO_DIM_STEPS, SLEEP_TIMER_STEPS, MenuContext, MenuModel, nex
 from .pixels import image_to_565
 from .skip import skip_target
 from .state import Settings, Store
+from .updater import UpdateError, Updater
 from .setupweb import SetupServer
 from .web import Session, UploadManager, WebServer, local_ip
 from .youtube import YouTubeManager, YtDlp, find_ytdlp
@@ -113,6 +115,7 @@ class App:
         self._setup_lock = threading.Lock()
         self._setup_gen = 0                    # bumped on every start/stop so a stale background step can tell
         self.connect_delay = 1.5               # lets the page's answer reach the phone before the hotspot drops
+        self.updater = Updater(Path(__file__).resolve().parent.parent)
         self._hold_player = False              # true while start_transfer/start_setup stop the player on purpose
         self.online_wait = 45.0                # how long after boot we wait for Wi-Fi before offering setup
         self._notice, self._notice_until = "", 0.0
@@ -1246,6 +1249,29 @@ class _WebHooks:
 
     def standby_path(self) -> str:
         return self.app.cfg.standby_image
+
+    # updates: UpdateError becomes ValueError so the web layer needs to know nothing about the updater
+    def update_status(self) -> dict:
+        return self.app.updater.status()
+
+    def update_check(self) -> dict:
+        return self.app.updater.check()
+
+    def update_apply(self) -> dict:
+        updater = self.app.updater
+        why = updater.can_update()
+        if why:
+            raise ValueError(why)
+        if updater.status().get("state") == "working":
+            raise ValueError("An update is already running.")
+        threading.Thread(target=updater.apply, daemon=True).start()
+        return {"state": "working"}
+
+    def update_rollback(self) -> dict:
+        try:
+            return self.app.updater.rollback()
+        except UpdateError as e:
+            raise ValueError(str(e))
 
     def set_standby(self, data: bytes) -> None:
         self.app.set_standby(data)
