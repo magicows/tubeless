@@ -305,6 +305,7 @@ def test_shutdown_needs_a_second_tap_to_confirm(rig):
     rig.tap_row(5)
     assert wait_for(lambda: rig.power.shutdown_requested)
     assert rig.state["mode"] == "shutdown"
+    assert wait_for(lambda: rig.display.frame565 is not None)             # SYSTEM HALT is on the display, not only an mpv overlay
 
 
 def test_gestures_are_ignored_while_shutting_down(rig):

@@ -530,7 +530,13 @@ class App:
         self.save_progress_now()
         self._close_menu_quietly()
         self.mode = "shutdown"
-        self._set_overlay(render.render_message(self.hw, "SYSTEM HALT", ["Safe to unplug in a few seconds"], self.name))
+        halt = render.render_message(self.hw, "SYSTEM HALT", ["Safe to unplug in a few seconds"], self.name)
+        self._set_overlay(halt)
+        if self.display is not None:                    # also on the display itself: the overlay goes when mpv is stopped
+            try:
+                self.display.show(image_to_565(halt))
+            except Exception as e:
+                log.warning("could not draw the halt screen: %s", e)
         self.cmd("set_property", "pause", True)
         self.power.shutdown()
 
