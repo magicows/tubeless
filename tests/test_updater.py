@@ -185,3 +185,10 @@ def test_nothing_to_install_when_up_to_date(app, tmp_path):
     u.check()
     with pytest.raises(UpdateError):
         u.apply()
+
+
+def test_no_release_published_yet_is_said_plainly(app):
+    import urllib.error
+    def none_yet(url, limit=None):
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+    assert "No release has been published" in Updater(app, current="0.1.0", fetch=none_yet).check()["error"]

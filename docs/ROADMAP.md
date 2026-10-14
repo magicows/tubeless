@@ -12,7 +12,8 @@
   * *Transfer*: Wi-Fi on, playback stopped, the screen becomes an upload progress display. No background uploads.
   * *Setup*: no known Wi-Fi, so the TV makes a hotspot with a QR code on screen and a captive portal.
 * **Upload advice, not conversion.** The upload page checks resolution/codec/bitrate and recommends; the user can override.
-* **Updates** come from GitHub releases (a menu item, later).
+* **Updates** come from GitHub releases, from the web page (built: check, install with a checksum and import test, roll back).
+  A touchscreen menu item is not planned: the TV only has Wi-Fi in upload mode.
 * **Distribution: a one-line installer, no image.** Flash Raspberry Pi OS Lite with Imager, SSH in, run one `curl ... | sudo sh`
   (`get.sh`: downloads a pinned, checksummed release and runs `install.sh`). Running it again updates. An image built by CI is
   optional and not planned. Repo: github.com/magicows/tubeless. First release (v0.1.0) is tagged when the author's own TV is upgraded.
@@ -41,13 +42,13 @@
 ## Next
 
 1. ~~**Friendly empty states**~~ done: with no videos the TV shows "No videos yet" with *Upload page* and *Check again* buttons.
-2. **Library index**: scan new files, record durations (mediainfo), keep it fresh when files appear.
-3. **Web companion** (small, streaming, low-memory): TV name (today: `python -m tubeless config set name ...`), channel management, settings, status/logs.
+2. ~~**Library index**~~ done: durations read with mediainfo into `index.json` (only new or changed files), while in upload mode and after uploads; the page shows each channel's length. Still to do: use the durations for "Live TV mode" below.
+3. ~~**Web companion**~~ done: TV name, channels, uploads, YouTube, settings, status and recent log, standby picture, updates.
 4. ~~**Transfer mode**~~ done (Settings > Upload videos, or the empty screen): menu toggle, fixed info screen with URL and QR code, resumable chunked uploads written to a `.part`
    file and renamed when done, disk-space check, file advice.
 5. ~~**Setup mode**~~ done and verified on the trial TV (Settings > Wi-Fi setup; automatic on first boot; Trixie/Bookworm only): first-boot hotspot with a QR code, captive portal, Wi-Fi country and the phone's clock/timezone.
-6. **`get.sh` one-line installer** (replaces the image build, and most of an updater): pinned release tarball + SHA-256 check,
-   runs `install.sh` with the same arguments (`--name`, `--dry-run`). A menu "update" item and rollback can come later.
+6. ~~**`get.sh` one-line installer**~~ written (release workflow publishes a tarball + SHA-256 on a `v*` tag; `get.sh` downloads, checks and runs
+   `install.sh`). Not yet run on a blank card (item 7). The web page's updater and rollback are built too.
 7. **Fresh-card test**: flash with Imager, run `get.sh`, no other preparation. The author's SimpTV upgrade (Bullseye to Trixie) is this test.
 8. **Channel sources** (see below), after the library index.
 9. **Themes** (see below).

@@ -74,7 +74,8 @@
       <section class="card" id="chanlist">
         <h2>Your channels</h2>
         <div id="channels"></div>
-        <div class="row" style="margin-top:12px"><button class="ghost" id="newFolder">+ Folder channel</button><button class="ghost" id="newYt">+ YouTube channel</button></div>
+        <p class="sub" id="scanline" style="margin-top:10px"></p>
+        <div class="row" style="margin-top:12px"><button class="ghost" id="rescan">Scan library</button><button class="ghost" id="newFolder">+ Folder channel</button><button class="ghost" id="newYt">+ YouTube channel</button></div>
         <div id="newbox" class="hide" style="margin-top:12px"><label for="newname" id="newlabel">Name</label>
           <div class="row"><input id="newname" type="text" maxlength="40" autocomplete="off"><button id="newgo">Create</button></div><p class="msg" id="newmsg"></p></div>
       </section>
@@ -128,6 +129,20 @@
         <h2>Name this TV</h2>
         <div class="row"><input id="nameIn" type="text" maxlength="16" autocomplete="off" aria-label="TV name"><button id="saveName" class="ghost">Save</button></div>
         <p class="msg" id="namemsg"></p>
+      </section>
+      <section class="card">
+        <h2>Settings</h2>
+        <label for="setBright">Brightness</label><select id="setBright"></select>
+        <label for="setDim" style="margin-top:10px">Dim the screen after (minutes without a touch)</label><select id="setDim"></select>
+        <label for="setSleep" style="margin-top:10px">Sleep timer (stops the TV after)</label><select id="setSleep"></select>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="setShuffle" style="width:auto"> Shuffle episodes</label>
+        <p class="msg" id="setmsg"></p>
+      </section>
+      <section class="card">
+        <h2>Status</h2>
+        <p class="sub" id="statline">Loading...</p>
+        <div class="row"><button id="logBtn" class="ghost">Show the recent log</button></div>
+        <pre id="logbox" class="hide" style="white-space:pre-wrap;font-size:11px;max-height:260px;overflow:auto;margin-top:8px"></pre>
       </section>
       <section class="card">
         <h2>Standby picture</h2>
@@ -195,6 +210,8 @@ async function load() {
   $('newChannel').classList.toggle('hide', sel.value !== '__new__');
   $('about').textContent = 'Tubeless ' + state.version + (state.youtube && state.youtube.available ? '  -  yt-dlp ' + (state.youtube.version || '') : '  -  YouTube channels need yt-dlp, which is not installed on this TV');
   renderChannels();
+  renderSettings();
+  loadStatus();
   loadStandby();
   if (!updTimer) loadUpdate();
   if (ytChannel) { const c = state.channels.find(x => x.name === ytChannel); if (!c) showChannelList(); }
@@ -221,6 +238,49 @@ $('standbyFile').onchange = async () => {
 $('standbyReset').onclick = async () => {
   try { await api('/api/standby/reset', {method: 'POST', body: '{}'}); say($('standbymsg'), 'Back to the original.', 'ok'); await load(); }
   catch (e) { say($('standbymsg'), e.message, 'bad'); }
+};
+
+const OFF_LABELS = {auto_dim_min: v => v ? v + ' min' : 'Never', sleep_timer_min: v => v ? v + ' min' : 'Off', brightness: v => v + '%'};
+function fillSelect(id, key, options, value) {
+  const sel = $(id); if (document.activeElement === sel) return;
+  sel.innerHTML = ''; for (const o of options) sel.add(new Option(OFF_LABELS[key](o), o)); sel.value = value;
+}
+function renderSettings() {
+  const st = state.settings; if (!st) return;
+  fillSelect('setBright', 'brightness', st.options.brightness, st.values.brightness);
+  fillSelect('setDim', 'auto_dim_min', st.options.auto_dim_min, st.values.auto_dim_min);
+  fillSelect('setSleep', 'sleep_timer_min', st.options.sleep_timer_min, st.values.sleep_timer_min);
+  $('setShuffle').checked = !!st.values.shuffle;
+}
+async function saveSetting(key, value) {
+  try { await api('/api/settings', {method: 'POST', body: JSON.stringify({[key]: value})}); say($('setmsg'), 'Saved.', 'ok'); }
+  catch (e) { say($('setmsg'), e.message, 'bad'); }
+  await load();
+}
+$('setBright').onchange = () => saveSetting('brightness', Number($('setBright').value));
+$('setDim').onchange = () => saveSetting('auto_dim_min', Number($('setDim').value));
+$('setSleep').onchange = () => saveSetting('sleep_timer_min', Number($('setSleep').value));
+$('setShuffle').onchange = () => saveSetting('shuffle', $('setShuffle').checked);
+function dur(sec) { const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60); return (d ? d + ' d ' : '') + (h || d ? h + ' h ' : '') + m + ' min'; }
+async function loadStatus() {
+  try {
+    const s = await api('/api/status'), bits = [];
+    if (s.uptime_s != null) bits.push('up ' + dur(s.uptime_s));
+    if (s.cpu_temp_c != null) bits.push(s.cpu_temp_c + ' C');
+    if (s.mem_free_mb != null) bits.push(s.mem_free_mb + ' MB memory free');
+    if (s.load) bits.push('load ' + s.load[0]);
+    if (state.free_bytes != null) bits.push(hr(state.free_bytes) + ' disk free');
+    if (s.os) bits.push(s.os);
+    bits.push('Python ' + s.python);
+    $('statline').textContent = bits.join('  -  ');
+  } catch (e) {}
+}
+$('logBtn').onclick = async () => {
+  try {
+    const res = await fetch('/api/logs?lines=200', {headers: {'X-Token': token}});
+    if (!res.ok) throw new Error('Error ' + res.status);
+    const box = $('logbox'); box.textContent = (await res.text()) || '(the log is empty)'; box.classList.remove('hide'); box.scrollTop = box.scrollHeight;
+  } catch (e) { say($('setmsg'), e.message, 'bad'); }
 };
 
 let updTimer = null;
@@ -363,13 +423,26 @@ let ytChannel = null, ytData = null, ticks = new Set(), dirty = false, pollTimer
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
+function hours(sec) { const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h ? h + ' h ' + (m < 10 ? '0' : '') + m + ' min' : m + ' min'; }
+let scanTimer = null;
+function renderScan() {
+  const s = state.scan || {};
+  $('scanline').textContent = s.running ? 'Reading video lengths: ' + s.done + ' of ' + s.total + '...' :
+    (!s.mediainfo ? 'Video lengths need mediainfo, which is not installed on this TV.' : (s.scanned_at ? 'Video lengths read.' : ''));
+  $('rescan').disabled = !!s.running || !s.mediainfo;
+  if (s.running && !scanTimer) scanTimer = setInterval(() => load().catch(() => {}), 2000);
+  if (!s.running && scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+}
+$('rescan').onclick = async () => { try { await api('/api/library/rescan', {method: 'POST', body: '{}'}); await load(); } catch (e) { $('scanline').textContent = e.message; } };
 function renderChannels() {
+  renderScan();
   const box = $('channels'); box.textContent = '';
   if (!state.channels.length) box.append(el('p', 'sub', 'No channels yet. Create one below, then add videos to it.'));
   for (const c of state.channels) {
     const row = el('div', 'chan'), left = el('div'), right = el('span', 'badge' + (c.kind === 'youtube' ? ' yt' : ''), c.kind === 'youtube' ? 'YouTube' : 'Folder');
     left.append(el('div', 'nm', c.label));
     let sub = c.count + ' video' + (c.count === 1 ? '' : 's');
+    if (c.kind !== 'youtube' && c.library && c.library.seconds) sub += '  -  ' + hours(c.library.seconds) + (c.library.unread ? '  (' + c.library.unread + ' not read yet)' : '');
     if (c.kind === 'youtube') { const y = c.youtube; sub = y.done + ' on the TV' + (y.waiting ? ', ' + y.waiting + ' waiting' : '') + (y.error ? ', ' + y.error + ' with problems' : ''); }
     left.append(el('div', 'sub2', sub));
     row.append(left, right);

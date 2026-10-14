@@ -27,6 +27,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
@@ -170,6 +171,8 @@ class Updater:
             self._set(state="idle")
         except UpdateError as e:
             self._set(state="error", error=str(e))
+        except urllib.error.HTTPError as e:
+            self._set(state="error", error="No release has been published yet." if e.code == 404 else f"GitHub said no ({e.code}).")
         except (OSError, ValueError, KeyError, TypeError) as e:
             log.info("update check failed: %s", e)
             self._set(state="error", error="Couldn't check for updates (is the TV online?).")

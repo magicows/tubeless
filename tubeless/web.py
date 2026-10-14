@@ -231,6 +231,10 @@ class WebServer:
         standby_path() -> str                 the picture shown while the player restarts
         set_standby(data: bytes) -> None      raises ValueError("why not")
         reset_standby() -> None               back to the picture that ships with Tubeless
+        set_setting(key, value) -> None       raises ValueError("why not")
+        status() -> dict                      uptime, temperature, memory ...
+        logs(lines: int) -> str               the end of the app's log
+        rescan(force: bool) -> dict           read video durations in the background; returns the scan status
         update_status() / update_check() / update_apply() / update_rollback() -> dict     (ValueError("why not"))
     """
 
@@ -333,6 +337,16 @@ class WebServer:
                             if ch["name"] in sums:
                                 ch["youtube"] = sums[ch["name"]]
                         self._json(200, state)
+                elif route == "/api/status":
+                    if self._authed():
+                        self._json(200, server.hooks.status())
+                elif route == "/api/logs":
+                    if self._authed():
+                        try:
+                            n = int(self._query().get("lines", "200"))
+                        except ValueError:
+                            n = 200
+                        self._send(200, server.hooks.logs(n).encode(), "text/plain; charset=utf-8")
                 elif route == "/api/update":
                     if self._authed():
                         self._json(200, server.hooks.update_status())
@@ -382,8 +396,27 @@ class WebServer:
                         self._json(200, {"name": server.hooks.set_name(str(data.get("name", "")))})
                     except ValueError as e:
                         self._fail(400, str(e))
-                elif route in ("/api/update/check", "/api/update/apply", "/api/update/rollback"):
+                elif route == "/api/settings":
                     if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    try:
+                        for key, value in data.items():
+                            server.hooks.set_setting(str(key), value)
+                    except ValueError as e:
+                        return self._fail(400, str(e))
+                    self._json(200, {"ok": True})
+                elif route == "/api/library/rescan":
+                    if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    self._json(200, server.hooks.rescan(bool(data.get("force"))))
+                elif route in ("/api/update/check", "/api/update/apply", "/api/update/rollback"):
+                    if not self._authed() or self._body_json() is None:        # the body is read so the connection stays in step
                         return
                     call = {"check": server.hooks.update_check, "apply": server.hooks.update_apply,
                             "rollback": server.hooks.update_rollback}[route.rsplit("/", 1)[1]]
@@ -392,7 +425,7 @@ class WebServer:
                     except ValueError as e:
                         self._fail(400, str(e))
                 elif route == "/api/standby/reset":
-                    if self._authed():
+                    if self._authed() and self._body_json() is not None:
                         server.hooks.reset_standby()
                         self._json(200, {"ok": True})
                 elif route == "/api/channel":

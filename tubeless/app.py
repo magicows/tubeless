@@ -10,6 +10,7 @@ Threads:
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import random
 import socket
@@ -23,6 +24,7 @@ from . import render
 from .config import Config, expand, set_config_value, user_config_path
 from .gestures import GestureRecognizer
 from .hardware import Hardware, apply_affine, solve_affine
+from .libindex import LibraryIndex
 from .library import Library, Plan, Playlists
 from .menu import AUTO_DIM_STEPS, SLEEP_TIMER_STEPS, MenuContext, MenuModel, next_step
 from .pixels import image_to_565
@@ -115,6 +117,7 @@ class App:
         self._setup_lock = threading.Lock()
         self._setup_gen = 0                    # bumped on every start/stop so a stale background step can tell
         self.connect_delay = 1.5               # lets the page's answer reach the phone before the hotspot drops
+        self.index = LibraryIndex(self.library, self.store)
         self.updater = Updater(Path(__file__).resolve().parent.parent)
         self._hold_player = False              # true while start_transfer/start_setup stop the player on purpose
         self.online_wait = 45.0                # how long after boot we wait for Wi-Fi before offering setup
@@ -914,6 +917,7 @@ class App:
         log.info("upload page on %s (PIN shown on the TV)", self.web_info["urls"])
         self.mode = "transfer"
         self._hold_player = False
+        self.index.start_scan()                         # the player is stopped, so reading durations costs playback nothing
         self._screen_dirty = True
         self._draw_screen()
 
@@ -1204,11 +1208,90 @@ class App:
     def web_state(self) -> dict:
         channels = []
         for c in self.library.channels():
-            channels.append({"name": c.name, "label": c.label, "count": len(self.library.videos(c))})
-        return {"name": self.name, "channels": channels, "standby_custom": self.cfg.standby_custom.is_file()}
+            channels.append({"name": c.name, "label": c.label, "count": len(self.library.videos(c)),
+                             "library": self.index.summary(c)})
+        return {"name": self.name, "channels": channels, "standby_custom": self.cfg.standby_custom.is_file(),
+                "scan": self.index.status(), "settings": self.web_settings()}
+
+    # --- settings, status and logs for the web page ------------------------------------------------------------
+    def web_settings(self) -> dict:
+        return {"values": {"brightness": self.brightness, "shuffle": self.shuffle, "auto_dim_min": self.auto_dim_min,
+                           "sleep_timer_min": self.sleep_timer_min},
+                "options": {"brightness": list(self.hw.brightness_levels), "auto_dim_min": list(AUTO_DIM_STEPS),
+                            "sleep_timer_min": list(SLEEP_TIMER_STEPS)}}
+
+    def set_web_setting(self, key: str, value) -> None:
+        """Change one of the settings the menu has, from the web page (the TV is in upload mode then, so the player is stopped)."""
+        options = self.web_settings()["options"]
+        if key == "shuffle":
+            if not isinstance(value, bool):
+                raise ValueError("Shuffle is on or off.")
+            self.shuffle = value
+            self.settings.set(shuffle=value)
+        elif key in options:
+            if isinstance(value, bool) or value not in options[key]:
+                raise ValueError(f"{value!r} isn't one of the choices for that setting.")
+            if key == "brightness":
+                self.brightness, self.dimmed = value, False
+                self.backlight.set(value)
+                self.settings.set(brightness=value)
+            elif key == "auto_dim_min":
+                self.auto_dim_min = value
+                self.settings.set(auto_dim_min=value)
+            else:
+                self.sleep_timer_min = value
+                self.sleep_deadline = time.time() + value * 60 if value else None
+        else:
+            raise ValueError("That isn't a setting you can change here.")
+        log.info("setting %s = %r from the web page", key, value)
+
+    def system_status(self) -> dict:
+        import platform
+        out = {"python": platform.python_version(), "load": None, "uptime_s": None, "cpu_temp_c": None, "mem_free_mb": None,
+               "os": None}
+        try:
+            out["uptime_s"] = int(float(open("/proc/uptime").read().split()[0]))
+            out["load"] = [round(x, 2) for x in os.getloadavg()]
+        except (OSError, ValueError, AttributeError):
+            pass
+        try:
+            out["cpu_temp_c"] = round(int(open("/sys/class/thermal/thermal_zone0/temp").read()) / 1000.0, 1)
+        except (OSError, ValueError):
+            pass
+        try:
+            for line in open("/proc/meminfo"):
+                if line.startswith("MemAvailable:"):
+                    out["mem_free_mb"] = int(line.split()[1]) // 1024
+        except (OSError, ValueError):
+            pass
+        try:
+            for line in open("/etc/os-release"):
+                if line.startswith("PRETTY_NAME="):
+                    out["os"] = line.split("=", 1)[1].strip().strip('"')
+        except OSError:
+            pass
+        return out
+
+    def recent_log(self, lines: int = 200) -> str:
+        """The last lines of the app's log file (at most 200 lines / 64 KB)."""
+        lines = max(1, min(int(lines), 200))
+        try:
+            with open(expand(self.cfg.log_file), "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(max(0, size - 65536))
+                text = f.read().decode("utf-8", "replace")
+        except OSError:
+            return ""
+        return "\n".join(text.splitlines()[-lines:])
+
+    def rescan_library(self, force: bool = False) -> dict:
+        self.index.start_scan(force)
+        return self.index.status()
 
     def on_uploaded(self, info: dict) -> None:
         log.info("uploaded %s/%s", info.get("channel"), info.get("file"))
+        self.index.start_scan()
         self._screen_dirty = True
 
 
@@ -1251,6 +1334,18 @@ class _WebHooks:
         return self.app.cfg.standby_image
 
     # updates: UpdateError becomes ValueError so the web layer needs to know nothing about the updater
+    def rescan(self, force: bool = False) -> dict:
+        return self.app.rescan_library(force)
+
+    def set_setting(self, key: str, value) -> None:
+        self.app.set_web_setting(key, value)
+
+    def status(self) -> dict:
+        return self.app.system_status()
+
+    def logs(self, lines: int) -> str:
+        return self.app.recent_log(lines)
+
     def update_status(self) -> dict:
         return self.app.updater.status()
 

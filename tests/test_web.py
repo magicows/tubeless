@@ -186,6 +186,21 @@ class Hooks:
     def reset_standby(self):
         self.standby = None
 
+    def set_setting(self, key, value):
+        if key != "brightness":
+            raise ValueError("That isn't a setting you can change here.")
+        self.settings = {key: value}
+
+    def status(self):
+        return {"python": "3.13.0", "uptime_s": 5}
+
+    def logs(self, lines):
+        return "line 1\nline 2\n"
+
+    def rescan(self, force=False):
+        self.rescanned = force
+        return {"running": True, "done": 0, "total": 3, "mediainfo": True, "scanned_at": None}
+
     def update_status(self):
         return {"current": "0.1.0", "state": "idle"}
 
@@ -337,3 +352,38 @@ def test_update_routes_need_the_pin_and_pass_hook_errors_to_the_page(server):
     code, body = call(server, "POST", "/api/update/apply", {}, token=token)[:2]
     assert code == 400 and "git checkout" in body["error"]
     assert call(server, "POST", "/api/update/rollback", {}, token=token)[0] == 400
+
+
+def test_library_rescan_needs_the_pin_and_passes_force_on(server):
+    assert call(server, "POST", "/api/library/rescan", {})[0] == 401
+    token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
+    assert call(server, "POST", "/api/library/rescan", {"force": True}, token=token)[1]["running"] is True
+    assert server.hooks.rescanned is True
+
+
+def test_settings_status_and_logs_over_http(server):
+    assert call(server, "POST", "/api/settings", {"brightness": 50})[0] == 401
+    token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
+    assert call(server, "POST", "/api/settings", {"brightness": 50}, token=token)[0] == 200
+    assert server.hooks.settings == {"brightness": 50}
+    code, body = call(server, "POST", "/api/settings", {"colour": "red"}, token=token)[:2]
+    assert code == 400 and "isn't a setting" in body["error"]
+    assert call(server, "GET", "/api/status", token=token)[1]["python"] == "3.13.0"
+    req = urllib.request.Request(server.base + "/api/logs?lines=5", headers={"X-Token": token})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        assert r.read().decode() == "line 1\nline 2\n"
+
+
+def test_post_routes_leave_the_connection_usable_for_the_next_request(server):
+    import http.client
+    token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
+    conn = http.client.HTTPConnection("127.0.0.1", int(server.base.rsplit(":", 1)[1]))
+    h = {"X-Token": token, "Content-Type": "application/json"}
+    for path in ("/api/update/check", "/api/standby/reset", "/api/library/rescan", "/api/update/apply"):
+        conn.request("POST", path, body="{}", headers=h)
+        assert conn.getresponse().read()
+        conn.request("GET", "/api/update", headers=h)                              # same connection straight after
+        r = conn.getresponse()
+        assert r.status == 200, (path, r.status)
+        r.read()
+    conn.close()

@@ -43,6 +43,9 @@ Only someone who can see the TV can get in. From there you can:
 * get advice on files that may not play well (resolution, codec, bitrate). Nothing is converted for you;
 * rename the TV;
 * change the "technical difficulties" picture shown when the player restarts;
+* set brightness, auto-dim, the sleep timer and shuffle, and see the TV's status and recent log;
+* see how long each channel is (video lengths are read with `mediainfo` while the TV is in upload mode);
+* check for a newer release and update the TV from the page (see Updating below);
 * build YouTube channels (below).
 
 Hold the TV's screen to leave the upload page. Copying files over SFTP or `scp` into `~/videos/<channel>/` works too.
@@ -122,7 +125,17 @@ You need the build from the original guide (see [Credits](#credits)): a Pi Zero 
    Run it again any time; it leaves anything already correct alone.
 3. Reboot. The first start walks you through calibrating the touch screen. With no videos yet the TV offers the upload page.
 
-To update a TV from your computer later: `tools/deploy.sh <ssh-host>`. Moving an existing SimpTV over? See
+## Updating
+
+On the upload page, the TV tab has an **Updates** card: *Check for updates* asks GitHub for the latest release, and
+*Update now* downloads it, checks its SHA-256, makes sure it starts, swaps the code in and restarts the TV. The code it replaced is
+kept, so *Go back to ...* undoes the update. Videos and settings are never touched. If a release changes system files (the service
+units), the page says so and you run `sudo sh ~/tubeless/install.sh` once over SSH.
+
+A new TV can be installed in one line: `curl -fsSL https://raw.githubusercontent.com/magicows/tubeless/main/get.sh | sudo sh -s -- --name "Living Room"`
+(it downloads the latest release, checks it, and runs `install.sh`).
+
+To update a TV from your computer instead (this is how a git checkout updates): `tools/deploy.sh <ssh-host>`. Moving an existing SimpTV over? See
 [docs/migrate-from-simptv.md](docs/migrate-from-simptv.md).
 
 ## Make it yours

@@ -398,3 +398,28 @@ def test_a_picture_from_the_web_page_becomes_the_standby_picture_until_reset(rig
         rig.app.set_standby(b"nope")
     rig.app.reset_standby()
     assert not rig.app.web_state()["standby_custom"]
+
+
+def test_settings_changed_from_the_web_page_apply_and_stick(rig):
+    app = rig.app
+    st = app.web_settings()
+    assert st["options"]["brightness"] == [25, 50, 75, 100] and st["values"]["brightness"] == 100
+    app.set_web_setting("brightness", 50)
+    app.set_web_setting("shuffle", False)
+    app.set_web_setting("auto_dim_min", 5)
+    app.set_web_setting("sleep_timer_min", 30)
+    assert rig.backlight.percent == 50 and app.sleep_deadline
+    assert json.loads((rig.cfg.data / "settings.json").read_text())["auto_dim_min"] == 5
+    for key, bad in (("brightness", 33), ("auto_dim_min", True), ("shuffle", "yes"), ("password", 1)):
+        with pytest.raises(ValueError):
+            app.set_web_setting(key, bad)
+
+
+def test_status_and_recent_log_for_the_web_page(rig):
+    assert "python" in rig.app.system_status()
+    log_file = rig.cfg.data / "tubeless.log"
+    rig.cfg.log_file = str(log_file)
+    log_file.write_text("\n".join(f"line {i}" for i in range(500)) + "\n")
+    out = rig.app.recent_log(3)
+    assert out == "line 497\nline 498\nline 499"
+    assert len(rig.app.recent_log(10_000).splitlines()) == 200
