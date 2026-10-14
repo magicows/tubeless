@@ -261,6 +261,15 @@ class App:
         self.cmd("set_property", "pause", False)
         self._set_resume(plan)
 
+    def _show_standby(self) -> None:
+        """Put the 'technical difficulties' picture on the display for the moment the player is down (it would show the boot screen)."""
+        if self.display is None:
+            return
+        try:
+            self.display.show(image_to_565(render.render_standby(self.hw, self.cfg.standby_image)))
+        except Exception as e:
+            log.warning("could not show the standby picture: %s", e)
+
     def finish_cycle(self) -> None:
         """You have been through everything: reshuffle and start a new cycle."""
         plan = self.playlists.new_cycle(self.current_channel(), self.shuffle)
@@ -745,6 +754,7 @@ class App:
                     finished = bool(getattr(self.player, "finished_normally", lambda: False)()) or (
                         pos is not None and count is not None and pos >= count - 2)
                     log.info("player is not running (%s) - restarting", "playlist finished" if finished else "crashed")
+                    self._show_standby()
                     if finished:
                         self.finish_cycle()
                     else:
@@ -868,6 +878,7 @@ class App:
         self.save_progress_now()
         self._close_menu_quietly()
         self._clear_overlay()
+        self.mode = "transfer"          # before the player stops: the monitor must not take that for a crash and restart it
         try:
             self.player.stop()
         except Exception:
@@ -890,7 +901,6 @@ class App:
         ip = local_ip()
         self.web_info = {"pin": session.pin, "port": port, "urls": [f"http://{ip}:{port}", f"http://{host}.local:{port}"]}
         log.info("upload page on %s (PIN shown on the TV)", self.web_info["urls"])
-        self.mode = "transfer"
         self._screen_dirty = True
         self._draw_screen()
 
@@ -943,6 +953,7 @@ class App:
         self.save_progress_now()
         self._close_menu_quietly()
         self._clear_overlay()
+        self.mode = "setup"             # before the player stops, so the monitor doesn't restart it
         try:
             self.player.stop()
         except Exception:
@@ -1152,11 +1163,35 @@ class App:
         log.info("renamed to %r from the upload page", value)
         return value
 
+    def set_standby(self, data: bytes) -> None:
+        """Keep a picture sent from the web page as the standby picture. Raises ValueError with a message for the page."""
+        import io
+        from PIL import Image
+        try:
+            with Image.open(io.BytesIO(data)) as src:
+                pic = src.convert("RGB")
+        except Exception:
+            raise ValueError("That doesn't look like a picture the TV can read (try a JPEG or PNG).")
+        pic.thumbnail((1280, 1280))
+        dest = self.cfg.standby_custom
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(".part")
+        pic.save(tmp, format="JPEG", quality=90)
+        tmp.replace(dest)
+        log.info("standby picture changed from the web page")
+
+    def reset_standby(self) -> None:
+        try:
+            self.cfg.standby_custom.unlink()
+        except FileNotFoundError:
+            pass
+        log.info("standby picture reset to the built-in one")
+
     def web_state(self) -> dict:
         channels = []
         for c in self.library.channels():
             channels.append({"name": c.name, "label": c.label, "count": len(self.library.videos(c))})
-        return {"name": self.name, "channels": channels}
+        return {"name": self.name, "channels": channels, "standby_custom": self.cfg.standby_custom.is_file()}
 
     def on_uploaded(self, info: dict) -> None:
         log.info("uploaded %s/%s", info.get("channel"), info.get("file"))
@@ -1197,6 +1232,15 @@ class _WebHooks:
 
     def set_name(self, name: str) -> str:
         return self.app.rename(name)
+
+    def standby_path(self) -> str:
+        return self.app.cfg.standby_image
+
+    def set_standby(self, data: bytes) -> None:
+        self.app.set_standby(data)
+
+    def reset_standby(self) -> None:
+        self.app.reset_standby()
 
     def uploaded(self, info: dict) -> None:
         self.app.on_uploaded(info)

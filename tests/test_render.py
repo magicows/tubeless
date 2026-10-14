@@ -103,3 +103,15 @@ def test_next_step_cycles():
     assert next_step((0, 15, 30), 0) == 15
     assert next_step((0, 15, 30), 30) == 0
     assert next_step((25, 50, 75, 100), 100) == 25
+
+
+def test_bear_with_us_card_fills_the_screen():
+    img = render.render_bear_with_us(HW)
+    assert img.size == (HW.view_w, HW.view_h)
+
+
+def test_standby_picture_is_fitted_to_the_screen_and_falls_back_to_the_bear(tmp_path):
+    from tubeless.config import ASSETS_DIR
+    img = render.render_standby(HW, str(ASSETS_DIR / "standby.jpg"))
+    assert img.size == (HW.view_w, HW.view_h)
+    assert render.render_standby(HW, str(tmp_path / "missing.jpg")).size == (HW.view_w, HW.view_h)

@@ -42,6 +42,7 @@ Only someone who can see the TV can get in. From there you can:
 * create channels and send video files (large files upload in pieces, and a dropped connection resumes);
 * get advice on files that may not play well (resolution, codec, bitrate). Nothing is converted for you;
 * rename the TV;
+* change the "technical difficulties" picture shown when the player restarts;
 * build YouTube channels (below).
 
 Hold the TV's screen to leave the upload page. Copying files over SFTP or `scp` into `~/videos/<channel>/` works too.

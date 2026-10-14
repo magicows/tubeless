@@ -175,6 +175,17 @@ class Hooks:
     def uploaded(self, info):
         self.uploads.append(info)
 
+    def standby_path(self):
+        return str(Path(web.__file__).parent / "assets" / "standby.jpg")
+
+    def set_standby(self, data):
+        if not data.startswith(b"\xff\xd8"):
+            raise ValueError("That doesn't look like a picture the TV can read (try a JPEG or PNG).")
+        self.standby = data
+
+    def reset_standby(self):
+        self.standby = None
+
 
 @pytest.fixture
 def server(tmp_path):
@@ -286,3 +297,16 @@ def test_the_server_stops_cleanly(tmp_path):
     srv.stop()
     with pytest.raises(Exception):
         urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2)
+
+
+def test_standby_picture_can_be_read_replaced_and_reset(server):
+    token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
+    assert call(server, "GET", "/api/standby")[0] == 401
+    req = urllib.request.Request(server.base + "/api/standby", headers={"X-Token": token})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        assert r.headers["Content-Type"] == "image/jpeg" and r.read(2) == b"\xff\xd8"
+    assert call(server, "PUT", "/api/standby", token=token, raw=b"\xff\xd8fake")[0] == 200
+    assert server.hooks.standby == b"\xff\xd8fake"
+    assert call(server, "PUT", "/api/standby", token=token, raw=b"not a picture")[0] == 400
+    assert call(server, "POST", "/api/standby/reset", {}, token=token)[0] == 200
+    assert server.hooks.standby is None

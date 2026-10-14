@@ -267,6 +267,52 @@ def render_message(hw: Hardware, title: str, lines: Sequence[str] = (), name: st
     return img
 
 
+def render_bear_with_us(hw: Hardware) -> Image.Image:
+    """The 'please stand by' card shown while the player restarts between cycles (or after a hiccup)."""
+    img = Image.new("RGBA", (hw.view_w, hw.view_h), (24, 38, 74, 255))
+    d = ImageDraw.Draw(img)
+    cx, cy = hw.bezel_center
+    u = min(hw.view_w, hw.view_h) / 480.0              # drawn for a 480 px short side
+    by = cy - 55 * u                                    # the bear's face centre
+    brown, dark, tan = (150, 98, 54, 255), (92, 58, 30, 255), (226, 186, 132, 255)
+
+    def ell(x, y, rx, ry, fill):
+        d.ellipse((cx + (x - rx) * u, by + (y - ry) * u, cx + (x + rx) * u, by + (y + ry) * u), fill=fill)
+
+    for sx in (-1, 1):                                  # ears
+        ell(sx * 78, -78, 34, 34, brown)
+        ell(sx * 78, -78, 18, 18, tan)
+    ell(0, 0, 105, 95, brown)                           # head
+    ell(0, 34, 52, 38, tan)                             # muzzle
+    ell(0, 14, 17, 11, dark)                            # nose
+    for sx in (-1, 1):
+        ell(sx * 40, -22, 11, 14, (255, 255, 255, 255))     # eyes, looking up and to the side
+        ell(sx * 40 + 3, -26, 5, 6, (20, 20, 20, 255))
+    d.arc((cx - 24 * u, by + 36 * u, cx + 24 * u, by + 66 * u), 200, 340, fill=dark, width=max(2, int(4 * u)))   # worried mouth
+    ell(88, -40, 7, 11, (120, 200, 255, 255))           # a bead of sweat
+    d.text((cx, by + 140 * u), "BEAR WITH US", font=fonts.load(fonts.MONO_BOLD, max(16, int(40 * u))),
+           fill=(255, 214, 90, 255), anchor="mm")
+    d.text((cx, by + 182 * u), "Technical difficulties. Please stand by.", font=fonts.load(fonts.MONO, max(10, int(17 * u))),
+           fill=(200, 210, 235, 255), anchor="mm")
+    return img
+
+
+def render_standby(hw: Hardware, path: str) -> Image.Image:
+    """The 'technical difficulties' picture, shown whole on the screen (any spare edge takes the picture's border colour).
+    Falls back to the bear if the file can't be read."""
+    try:
+        with Image.open(path) as src:
+            pic = src.convert("RGBA")
+    except Exception:
+        return render_bear_with_us(hw)
+    scale = min(hw.view_w / pic.width, hw.view_h / pic.height)
+    size = (max(1, round(pic.width * scale)), max(1, round(pic.height * scale)))
+    pic = pic.resize(size, getattr(Image, "Resampling", Image).LANCZOS)
+    img = Image.new("RGBA", (hw.view_w, hw.view_h), pic.getpixel((0, 0)))
+    img.paste(pic, ((hw.view_w - size[0]) // 2, (hw.view_h - size[1]) // 2))
+    return img
+
+
 def calibration_targets(hw: Hardware):
     """Where the wizard asks you to tap (landscape view coordinates): four corners, then the middle."""
     cx, cy = hw.bezel_center

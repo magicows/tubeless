@@ -381,3 +381,17 @@ def test_the_wizard_still_appears_if_the_player_is_not_ready_at_first(tmp_path):
         assert wait_for(lambda: r.player.overlay is not None, timeout=5)    # ... but it does appear once the player is ready
     finally:
         r.stop()
+
+
+def test_a_picture_from_the_web_page_becomes_the_standby_picture_until_reset(rig):
+    import io
+    from PIL import Image
+    assert rig.cfg.standby_image.endswith("standby.jpg") and not rig.app.web_state()["standby_custom"]
+    buf = io.BytesIO()
+    Image.new("RGB", (50, 30), (200, 10, 10)).save(buf, "PNG")
+    rig.app.set_standby(buf.getvalue())
+    assert rig.app.web_state()["standby_custom"] and rig.cfg.standby_image == str(rig.cfg.standby_custom)
+    with pytest.raises(ValueError):
+        rig.app.set_standby(b"nope")
+    rig.app.reset_standby()
+    assert not rig.app.web_state()["standby_custom"]

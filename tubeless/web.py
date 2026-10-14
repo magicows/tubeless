@@ -33,6 +33,7 @@ log = logging.getLogger(__name__)
 
 MAX_CHUNK = 16 * 1024 * 1024
 MAX_JSON = 65536
+MAX_STANDBY = 8 * 1024 * 1024          # a phone photo is fine; the TV shrinks it
 RESERVE_BYTES = 300 * 1024 * 1024        # never fill the card completely
 MAX_FILENAME = 150
 MAX_CHANNEL = 40
@@ -227,6 +228,9 @@ class WebServer:
         state() -> dict                       name, channels, ...
         set_name(name) -> str                 raises ValueError("why not")
         uploaded(info: dict) -> None          after a file completes (info includes advice)
+        standby_path() -> str                 the picture shown while the player restarts
+        set_standby(data: bytes) -> None      raises ValueError("why not")
+        reset_standby() -> None               back to the picture that ships with Tubeless
     """
 
     def __init__(self, manager: UploadManager, session: Session, hooks, host: str = "0.0.0.0", port: int = 8080,
@@ -328,6 +332,12 @@ class WebServer:
                             if ch["name"] in sums:
                                 ch["youtube"] = sums[ch["name"]]
                         self._json(200, state)
+                elif route == "/api/standby":
+                    if self._authed():
+                        try:
+                            self._send(200, Path(server.hooks.standby_path()).read_bytes(), "image/jpeg")
+                        except OSError:
+                            self._fail(404, "No picture.")
                 elif route == "/api/yt/progress":
                     if self._authed() and self._yt():
                         self._json(200, server.youtube.progress())
@@ -368,6 +378,10 @@ class WebServer:
                         self._json(200, {"name": server.hooks.set_name(str(data.get("name", "")))})
                     except ValueError as e:
                         self._fail(400, str(e))
+                elif route == "/api/standby/reset":
+                    if self._authed():
+                        server.hooks.reset_standby()
+                        self._json(200, {"ok": True})
                 elif route == "/api/channel":
                     if not self._authed():
                         return
@@ -418,6 +432,17 @@ class WebServer:
 
             # -- PUT (one chunk of an upload)
             def do_PUT(self):
+                if self._route() == "/api/standby":
+                    if not self._authed():
+                        return
+                    length = int(self.headers.get("Content-Length") or 0)
+                    if length > MAX_STANDBY:
+                        return self._fail(413, "That picture is too big (8 MB at most).")
+                    try:
+                        server.hooks.set_standby(self.rfile.read(length))
+                    except ValueError as e:
+                        return self._fail(400, str(e))
+                    return self._json(200, {"ok": True})
                 if self._route() != "/api/upload":
                     return self._fail(404, "Not found.")
                 if not self._authed():

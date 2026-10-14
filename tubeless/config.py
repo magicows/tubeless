@@ -84,6 +84,17 @@ class Config:
     def long_static(self) -> str:
         return str(expand(self.static_long)) if self.static_long else str(ASSETS_DIR / "static_long.mp4")
 
+    @property
+    def standby_custom(self) -> Path:
+        """Where a picture chosen on the web page is kept."""
+        return self.data / "standby.jpg"
+
+    @property
+    def standby_image(self) -> str:
+        """The 'technical difficulties' picture: the one chosen on the web page, else the one that ships with Tubeless."""
+        custom = self.standby_custom
+        return str(custom if custom.is_file() else ASSETS_DIR / "standby.jpg")
+
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
         known = {f.name for f in fields(cls)}
