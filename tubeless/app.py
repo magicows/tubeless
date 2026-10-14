@@ -113,6 +113,7 @@ class App:
         self._setup_lock = threading.Lock()
         self._setup_gen = 0                    # bumped on every start/stop so a stale background step can tell
         self.connect_delay = 1.5               # lets the page's answer reach the phone before the hotspot drops
+        self._hold_player = False              # true while start_transfer/start_setup stop the player on purpose
         self.online_wait = 45.0                # how long after boot we wait for Wi-Fi before offering setup
         self._notice, self._notice_until = "", 0.0
         self._screen_dirty, self._last_screen = True, 0.0
@@ -744,7 +745,7 @@ class App:
         last_restart = 0.0
         while not self.stop_event.wait(self.exit_check_every):
             try:
-                if self.mode in ("shutdown", "empty", "transfer", "setup"):
+                if self._hold_player or self.mode in ("shutdown", "empty", "transfer", "setup"):
                     continue
                 if not self.player.alive():
                     if time.time() - last_restart < self.min_restart_gap:
@@ -878,7 +879,7 @@ class App:
         self.save_progress_now()
         self._close_menu_quietly()
         self._clear_overlay()
-        self.mode = "transfer"          # before the player stops: the monitor must not take that for a crash and restart it
+        self._hold_player = True        # the monitor must not take the player stopping for a crash and restart it
         try:
             self.player.stop()
         except Exception:
@@ -894,6 +895,7 @@ class App:
         except OSError as e:
             log.error("could not start the upload page: %s", e)
             self._notice, self._notice_until = f"Couldn't start the upload page ({e.strerror or e}).", time.time() + 6
+            self._hold_player = False
             self._back_from_transfer()
             return
         self.web = server
@@ -901,6 +903,8 @@ class App:
         ip = local_ip()
         self.web_info = {"pin": session.pin, "port": port, "urls": [f"http://{ip}:{port}", f"http://{host}.local:{port}"]}
         log.info("upload page on %s (PIN shown on the TV)", self.web_info["urls"])
+        self.mode = "transfer"
+        self._hold_player = False
         self._screen_dirty = True
         self._draw_screen()
 
@@ -953,7 +957,7 @@ class App:
         self.save_progress_now()
         self._close_menu_quietly()
         self._clear_overlay()
-        self.mode = "setup"             # before the player stops, so the monitor doesn't restart it
+        self._hold_player = True        # so the monitor doesn't restart the player we are stopping
         try:
             self.player.stop()
         except Exception:
@@ -965,6 +969,7 @@ class App:
         self.setup = {"ssid": ssid, "password": password, "address": HOTSPOT_IP, "status": "Starting Wi-Fi setup...",
                       "busy": False, "then_upload": then_upload, "networks": []}
         self.mode = "setup"
+        self._hold_player = False
         self._screen_dirty = True
         self._draw_screen()
         threading.Thread(target=self._setup_bringup, args=(gen,), daemon=True).start()
