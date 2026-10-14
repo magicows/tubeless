@@ -1,0 +1,34 @@
+name: release
+
+# Push a tag like v0.2.0 (after bumping __version__ in tubeless/__init__.py) and this publishes the release:
+# a tarball plus its SHA-256, which get.sh and the web page's updater both check before installing.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag must match the version in the code
+        run: |
+          version=$(python3 -c "import re; print(re.search(r'__version__ = \"(.+?)\"', open('tubeless/__init__.py').read()).group(1))")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match __version__ $version"
+            exit 1
+          fi
+      - name: Build the tarball and its checksum
+        run: |
+          name="tubeless-${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="$name/" -o "$name.tar.gz" "$GITHUB_REF_NAME"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" tubeless-*.tar.gz tubeless-*.tar.gz.sha256 \
+            --title "Tubeless ${GITHUB_REF_NAME#v}" --generate-notes
