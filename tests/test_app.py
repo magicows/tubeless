@@ -122,6 +122,8 @@ def test_settings_survive_a_restart(tmp_path):
     assert wait_for(lambda: r.state["shuffle"] is False)
     r.tap_row(4)                                                           # auto-dim
     assert wait_for(lambda: r.state["auto_dim_min"] == 2)
+    saved = lambda: json.loads((tmp_path / "data" / "settings.json").read_text())      # the app saves just after it changes
+    assert wait_for(lambda: saved().get("auto_dim_min") == 2 and saved().get("shuffle") is False and saved().get("brightness") == 25)
     r.stop()
     again = Rig(tmp_path, start=False)
     assert again.app.brightness == 25 and again.app.shuffle is False and again.app.auto_dim_min == 2
