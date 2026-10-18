@@ -9,6 +9,7 @@ Threads:
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue
@@ -30,6 +31,7 @@ from .menu import AUTO_DIM_STEPS, SLEEP_TIMER_STEPS, MenuContext, MenuModel, nex
 from .pixels import image_to_565
 from .skip import skip_target
 from .state import Settings, Store
+from . import __version__
 from .updater import UpdateError, Updater
 from .setupweb import SetupServer
 from .web import Session, UploadManager, WebServer, local_ip
@@ -119,8 +121,11 @@ class App:
         self._setup_gen = 0                    # bumped on every start/stop so a stale background step can tell
         self.connect_delay = 1.5               # lets the page's answer reach the phone before the hotspot drops
         self.index = LibraryIndex(self.library, self.store)
-        self.updater = Updater(Path(__file__).resolve().parent.parent)
+        self._updating = False                 # the 'update installed, restarting' card is on the display: leave it alone
+        self.updater = Updater(Path(__file__).resolve().parent.parent, notify=self._announce_update,
+                               marker=self.cfg.data / "updated.json")
         self._hold_player = False              # true while start_transfer/start_setup stop the player on purpose
+        self.update_notice_seconds = 4.0       # how long 'update complete' stays over the video
         self.fast_death_seconds = 15.0         # a player that dies sooner than this after starting is failing, not finishing
         self.restart_backoff = 60.0            # after 3 such deaths in a row, wait this long between restarts
         self._fast_restarts = 0
@@ -213,6 +218,7 @@ class App:
             log.warning("channel %s has no videos; starting on %s instead", names[self.channel_index], names[idx])
             self.channel_index = idx
         self.start_playback()
+        self._confirm_update()
         if self.settings.fresh and not self.settings.get("first_run_done"):
             self.begin_calibration(first_run=True)            # a brand new install starts by calibrating touch
 
@@ -275,6 +281,43 @@ class App:
         self.cmd("loadfile", path, "replace")
         self.cmd("set_property", "pause", False)
         self._set_resume(plan)
+
+    def _announce_update(self, kind: str, version: str) -> None:
+        """The card on the TV just before it restarts into the new (or previous) version."""
+        self._updating = True
+        threading.Timer(20.0, self._update_card_expired).start()          # still running 20 s on = the restart didn't happen
+        if self.display is None:
+            return
+        title = "UPDATE INSTALLED" if kind == "update" else "BACK TO THE PREVIOUS VERSION"
+        img = render.render_message(self.hw, title, [f"Version {version}", "Restarting now.", "Playback resumes in a moment."], self.name)
+        self.display.show(image_to_565(img))
+
+    def _update_card_expired(self) -> None:
+        if self._updating and not self.stop_event.is_set():
+            log.warning("the update card has been up for 20 s and the TV has not restarted; going back to normal")
+            self._updating, self._screen_dirty = False, True
+
+    def _confirm_update(self) -> None:
+        """After a restart that an update (or rollback) caused: say so over the video for a few seconds."""
+        marker = self.cfg.data / "updated.json"
+        try:
+            note = json.loads(marker.read_text())
+            marker.unlink()
+        except (OSError, ValueError):
+            return
+        if not isinstance(note, dict) or note.get("to") != __version__:
+            return                                                        # the restart didn't bring the version we expected: say nothing
+        log.info("now running %s (%s from %s)", __version__, note.get("kind"), note.get("from"))
+        title = "UPDATE COMPLETE" if note.get("kind") == "update" else "ROLLED BACK"
+        self._set_overlay(render.render_message(self.hw, title, [f"Now running version {__version__}", "Resuming playback..."], self.name))
+
+        def clear_later():
+            end = time.time() + 30
+            while self._overlay_pending is not None and time.time() < end and not self.stop_event.is_set():
+                time.sleep(0.2)                                           # not on screen until mpv is up
+            self.stop_event.wait(self.update_notice_seconds)
+            self.events.put(("clear_update_notice",))
+        threading.Thread(target=clear_later, daemon=True).start()
 
     def _show_standby(self) -> None:
         """Put the 'technical difficulties' picture on the display for the moment the player is down (it would show the boot screen)."""
@@ -657,6 +700,9 @@ class App:
         elif kind == "setup_auto":
             if self.mode in ("play", "empty") and self.setup is None:
                 self.start_setup()
+        elif kind == "clear_update_notice":
+            if self.mode == "play" and not self.menu_open:
+                self._clear_overlay()
         elif kind == "calibration_done":
             if self.mode == "calibrate":
                 self.end_calibration("Calibrated")
@@ -1180,7 +1226,7 @@ class App:
             self.stop_transfer()
 
     def _draw_screen(self) -> None:
-        if self.display is None:
+        if self.display is None or self._updating:
             return
         now = time.time()
         notice = self._notice if now < self._notice_until else ""

@@ -192,3 +192,15 @@ def test_no_release_published_yet_is_said_plainly(app):
     def none_yet(url, limit=None):
         raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
     assert "No release has been published" in Updater(app, current="0.1.0", fetch=none_yet).check()["error"]
+
+
+def test_apply_leaves_a_marker_and_tells_the_tv_before_restarting(app, tmp_path):
+    events = []
+    marker = tmp_path / "data" / "updated.json"
+    u = Updater(app, current="0.1.0", fetch=Release(tmp_path, "0.2.0").fetch, python=sys.executable,
+                restart=lambda: events.append("restart"), notify=lambda kind, v: events.append((kind, v)), marker=marker)
+    u.check(); u.apply()
+    assert events == [("update", "0.2.0"), "restart"]                                # the card goes up first, then the restart
+    assert json.loads(marker.read_text()) == {"kind": "update", "from": "0.1.0", "to": "0.2.0"}
+    u.rollback()
+    assert events[-2:] == [("rollback", "0.1.0"), "restart"] and json.loads(marker.read_text())["kind"] == "rollback"

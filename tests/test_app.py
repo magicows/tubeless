@@ -478,3 +478,46 @@ def test_no_heartbeat_check_right_after_the_player_starts(tmp_path):
             appmod.HEARTBEAT_EVERY = old
     finally:
         r.stop()
+
+
+def test_after_an_update_restart_the_new_version_confirms_itself_over_the_video(tmp_path):
+    import tubeless
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "updated.json").write_text(json.dumps({"kind": "update", "from": "0.0.9", "to": tubeless.__version__}))
+    r = Rig(tmp_path)
+    try:
+        assert wait_for(lambda: r.player.overlay is not None, timeout=3)               # 'UPDATE COMPLETE' is up
+        assert wait_for(lambda: r.player.overlay is None, timeout=4)                   # and goes away by itself
+        assert not (tmp_path / "data" / "updated.json").exists()
+    finally:
+        r.stop()
+
+
+def test_a_restart_that_did_not_bring_the_expected_version_says_nothing(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "updated.json").write_text(json.dumps({"kind": "update", "from": "0.0.9", "to": "99.0.0"}))
+    r = Rig(tmp_path)
+    try:
+        time.sleep(0.8)
+        assert r.player.overlay is None and not (tmp_path / "data" / "updated.json").exists()
+    finally:
+        r.stop()
+
+
+def test_the_update_card_goes_on_the_display_and_is_not_redrawn_over(rig):
+    rig.app.start_transfer()
+    assert wait_for(lambda: rig.state["mode"] == "transfer")
+    rig.app._announce_update("update", "9.9.9")
+    shown = rig.display.frame565.copy()
+    rig.app._screen_dirty = True
+    rig.app._refresh_screen()                                                       # the transfer screen refreshes every second...
+    assert (rig.display.frame565 == shown).all()                                    # ...but must not paint over the card
+
+
+def test_the_update_card_does_not_freeze_the_screen_if_the_restart_never_comes(rig, monkeypatch):
+    import threading as th
+    real = th.Timer
+    monkeypatch.setattr("tubeless.app.threading.Timer", lambda delay, fn, *a, **k: real(0.2 if delay == 20.0 else delay, fn, *a, **k))
+    rig.app._announce_update("update", "9.9.9")
+    assert rig.app._updating is True
+    assert wait_for(lambda: rig.app._updating is False, timeout=2)

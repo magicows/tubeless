@@ -56,6 +56,7 @@ class Rig:
         self.app.stream_notice_for = 1.0
         self.app.online_wait = 0.3
         self.app.saved_wifi_wait = 0.5
+        self.app.update_notice_seconds = 0.3
         self.app.exit_check_every = 0.05
         self.app.min_restart_gap = 0.0
         self.app.progress_save_every = 0.1

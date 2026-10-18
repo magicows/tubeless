@@ -110,7 +110,9 @@ def _dir_digest(path: Path) -> str:
 class Updater:
     def __init__(self, appdir, current: str = __version__, repo: str = REPO,
                  fetch: Callable[[str], bytes] = default_fetch, restart: Callable[[], None] = _restart_service,
-                 python: str = sys.executable, clock: Callable[[], float] = time.time):
+                 python: str = sys.executable, clock: Callable[[], float] = time.time,
+                 notify: Callable[[str, str], None] = lambda kind, version: None, marker: Optional[Path] = None):
+        self.notify, self.marker = notify, Path(marker) if marker else None
         self.appdir = Path(appdir)
         self.current, self.repo, self.fetch, self.restart = current, repo, fetch, restart
         self.python, self.clock = python, clock
@@ -201,6 +203,7 @@ class Updater:
                 system_changed = self._install(new)
             log.info("updated to %s; restarting", rel["version"])
             self._set(state="restarting", version=rel["version"], system_changed=system_changed)
+            self._announce("update", rel["version"])
             self.restart()
         except UpdateError as e:
             self._set(state="error", error=str(e))
@@ -208,6 +211,19 @@ class Updater:
             log.exception("update failed")
             self._set(state="error", error=f"The update failed and nothing was changed ({e}).")
         return self.status()
+
+    def _announce(self, kind: str, version: str) -> None:
+        """Leave a note for the next start (it confirms the new version is running) and tell the TV's screen, before the restart."""
+        if self.marker:
+            try:
+                self.marker.parent.mkdir(parents=True, exist_ok=True)
+                self.marker.write_text(json.dumps({"kind": kind, "from": self.current, "to": version}))
+            except OSError:
+                pass
+        try:
+            self.notify(kind, version)
+        except Exception:
+            log.exception("could not show the update message on the TV")
 
     def _verify(self, new: Path, version: str) -> None:
         init = new / "tubeless" / "__init__.py"
@@ -265,5 +281,6 @@ class Updater:
         shutil.rmtree(self.appdir / BACKUP, ignore_errors=True)
         log.info("rolled back to %s; restarting", version)
         self._set(state="restarting", version=version, rolled_back=True)
+        self._announce("rollback", version)
         self.restart()
         return self.status()
