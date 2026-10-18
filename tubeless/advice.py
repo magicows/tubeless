@@ -103,5 +103,5 @@ def advise(info: Optional[Dict[str, Any]]) -> List[Advice]:
     if a and a.get("channels") and a["channels"] > 2:
         out.append(Advice("info", f"{int(a['channels'])}-channel audio is mixed down to the single speaker."))
     if not out:
-        out.append(Advice("ok", "Looks good for this screen."))
+        out.append(Advice("ok", "File received successfully."))
     return out
