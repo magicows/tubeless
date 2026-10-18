@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                      # the notes list the commits since the previous release
       - name: The tag must match the version in the code
         run: |
           version=$(python3 -c "import re; print(re.search(r'__version__ = \"(.+?)\"', open('tubeless/__init__.py').read()).group(1))")
@@ -26,9 +28,14 @@ jobs:
           name="tubeless-${GITHUB_REF_NAME#v}"
           git archive --format=tar.gz --prefix="$name/" -o "$name.tar.gz" "$GITHUB_REF_NAME"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - name: Write the release notes
+        run: |
+          prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          range=${prev:+$prev..}$GITHUB_REF_NAME
+          { echo "What changed:"; echo; git log --no-merges --pretty='format:- %s' "$range" | grep -v '^- Version ' || true; } > notes.md
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" tubeless-*.tar.gz tubeless-*.tar.gz.sha256 \
-            --title "Tubeless ${GITHUB_REF_NAME#v}" --generate-notes
+            --title "Tubeless ${GITHUB_REF_NAME#v}" --notes-file notes.md
