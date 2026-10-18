@@ -120,6 +120,7 @@ class App:
         self.index = LibraryIndex(self.library, self.store)
         self.updater = Updater(Path(__file__).resolve().parent.parent)
         self._hold_player = False              # true while start_transfer/start_setup stop the player on purpose
+        self.saved_wifi_wait = 20.0            # how long Upload waits for a saved network that hasn't connected yet (just after boot)
         self.online_wait = 45.0                # how long after boot we wait for Wi-Fi before offering setup
         self._notice, self._notice_until = "", 0.0
         self._screen_dirty, self._last_screen = True, 0.0
@@ -200,6 +201,8 @@ class App:
         if idx is None:
             log.warning("no videos found in %s: showing the 'no videos yet' screen", self.library.root)
             self.enter_empty()
+            if self.settings.fresh and not self.settings.get("first_run_done"):
+                self.begin_calibration(first_run=True)        # a brand new card has no videos yet, and still starts by calibrating
             return
         if idx != self.channel_index:
             log.warning("channel %s has no videos; starting on %s instead", names[self.channel_index], names[idx])
@@ -552,23 +555,34 @@ class App:
     def begin_calibration(self, first_run: bool = False) -> None:
         log.info("calibration started")
         self._close_menu_quietly()
+        back = "empty" if self.mode == "empty" else "play"           # on the 'no videos yet' screen there is no player to draw on
         self.mode = "calibrate"
         self._calib = {"step": 0, "targets": render.calibration_targets(self.hw), "pairs": [],
-                       "deadline": time.time() + CALIBRATION_TIMEOUT, "first_run": first_run}
+                       "deadline": time.time() + CALIBRATION_TIMEOUT, "first_run": first_run, "back": back}
         self._show_calibration()
+
+    def _show_calibration_image(self, image) -> None:
+        if self._calib and self._calib.get("back") == "empty" and self.display is not None:
+            self.display.show(image_to_565(image))
+        else:
+            self._set_overlay(image)
 
     def _show_calibration(self, message: str = "") -> None:
         c = self._calib
-        self._set_overlay(render.render_calibration(self.hw, c["step"], len(c["targets"]),
-                                                    c["targets"][c["step"]], message, self.name))
+        self._show_calibration_image(render.render_calibration(self.hw, c["step"], len(c["targets"]),
+                                                               c["targets"][c["step"]], message, self.name))
 
     def end_calibration(self, message: str = "") -> None:
         if self._calib and self._calib.get("first_run"):
             self.settings.set(first_run_done=True)
+        back = (self._calib or {}).get("back", "play")
         self._calib = None
+        log.info("calibration ended: %s", message)
+        if back == "empty":
+            self.enter_empty()
+            return
         self.mode = "play"
         self._clear_overlay()
-        log.info("calibration ended: %s", message)
 
     def _calibration_gesture(self, g: tuple) -> None:
         c = self._calib
@@ -597,7 +611,7 @@ class App:
         self.affine = affine
         self.settings.set(touch_affine=[list(r) for r in affine], touch_calibrated=True)
         log.info("calibration applied (error %.1f px)", rms)
-        self._set_overlay(render.render_message(self.hw, "TOUCH CALIBRATED", ["error %.1f px" % rms], self.name))
+        self._show_calibration_image(render.render_message(self.hw, "TOUCH CALIBRATED", ["error %.1f px" % rms], self.name))
         c["done"] = True                                      # ignore taps while the result shows
         c["deadline"] = time.time() + 5
         threading.Timer(1.5, lambda: self.events.put(("calibration_done",))).start()
@@ -881,13 +895,30 @@ class App:
         self._screen_dirty = True
         self._draw_screen()
 
+    def _wait_for_saved_network(self) -> bool:
+        """Just after boot a saved network may not have connected yet; give it a moment rather than offering hotspot setup."""
+        self._notice, self._notice_until = "Connecting to Wi-Fi...", time.time() + self.saved_wifi_wait + 1
+        self._screen_dirty = True
+        self._draw_screen()
+        deadline = time.time() + self.saved_wifi_wait
+        while True:
+            if self.wifi.connected_ip() is not None:
+                self._notice = ""
+                return True
+            left = deadline - time.time()
+            if left <= 0 or self.stop_event.is_set():
+                self._notice = ""
+                return False
+            self.stop_event.wait(min(0.5, left))
+
     def start_transfer(self) -> None:
         """Stop the player, start the upload page, and show its address, QR code and PIN on the TV."""
         if self.mode == "transfer":
             return
         if self.wifi_available and not self.online():
-            self.start_setup(then_upload=True)              # an upload page is no use without a network
-            return
+            if not (self.wifi.has_saved() and self._wait_for_saved_network()):
+                self.start_setup(then_upload=True)          # an upload page is no use without a network
+                return
         self.save_progress_now()
         self._close_menu_quietly()
         self._clear_overlay()

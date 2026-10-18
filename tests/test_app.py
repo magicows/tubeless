@@ -190,6 +190,19 @@ def test_first_run_starts_with_the_calibration_wizard(tmp_path):
         r.stop()
 
 
+def test_first_run_with_no_videos_calibrates_on_the_display_then_shows_the_empty_screen(tmp_path):
+    r = Rig(tmp_path, channels={"1.nothing": ["notes.txt"]}, fresh=True)
+    try:
+        assert wait_for(lambda: r.state["mode"] == "calibrate")
+        assert wait_for(lambda: r.display.frame565 is not None)                 # drawn on the display itself, not an mpv overlay
+        calibrate(r, lambda vx, vy: (vx, vy))
+        assert wait_for(lambda: r.app.settings.get("touch_calibrated") is True, timeout=3)
+        assert wait_for(lambda: r.state["mode"] == "empty", timeout=4)          # and back to 'No videos yet'
+        assert r.app.settings.get("first_run_done") is True
+    finally:
+        r.stop()
+
+
 def calibrate(r, panel_affine_view_to_raw_taps):
     from tubeless import render
     for vx, vy in render.calibration_targets(HW):

@@ -1,3 +1,4 @@
+import threading
 import json
 import time
 
@@ -243,5 +244,28 @@ def test_auto_setup_can_be_switched_off(tmp_path, fake):
     try:
         time.sleep(1.2)
         assert r.state["mode"] == "play"
+    finally:
+        r.stop()
+
+
+def test_upload_waits_for_a_saved_network_that_is_still_connecting_after_boot(tmp_path):
+    from test_modes import button_centre
+    wifi = FakeWifi(ip=None, saved=True)
+    r = Rig(tmp_path, channels={"1.nothing": ["notes.txt"]}, wifi=wifi, setup_auto=False)
+    try:
+        threading.Timer(0.2, lambda: setattr(wifi, "ip", "192.168.1.50")).start()          # the saved network connects a moment later
+        r.tap(*button_centre("upload"))
+        assert wait_for(lambda: r.state["mode"] == "transfer", timeout=4)                 # straight to the upload page, no hotspot
+        assert ("hotspot_up",) not in [c[:1] for c in wifi.calls]
+    finally:
+        r.stop()
+
+
+def test_upload_offers_setup_if_the_saved_network_never_connects(tmp_path):
+    from test_modes import button_centre
+    r = Rig(tmp_path, channels={"1.nothing": ["notes.txt"]}, wifi=FakeWifi(ip=None, saved=True), setup_auto=False)
+    try:
+        r.tap(*button_centre("upload"))
+        assert wait_for(lambda: r.state["mode"] == "setup", timeout=4)                    # after the short wait
     finally:
         r.stop()
