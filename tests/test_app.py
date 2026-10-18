@@ -436,3 +436,23 @@ def test_status_and_recent_log_for_the_web_page(rig):
     out = rig.app.recent_log(3)
     assert out == "line 497\nline 498\nline 499"
     assert len(rig.app.recent_log(10_000).splitlines()) == 200
+
+
+def test_a_player_that_keeps_dying_at_once_is_not_restarted_in_a_tight_loop(tmp_path):
+    r = Rig(tmp_path)
+    try:
+        starts = []
+        r.player.alive = lambda: False                              # mpv exits straight after every start (a stream that won't open)
+        r.player.finished_normally = lambda: True                   # ... and calls it a clean exit, which is what mpv does
+        real_start = r.player.start
+        r.player.start = lambda path: (starts.append(1), real_start(path))[1]
+        r.app.fast_death_seconds, r.app.restart_backoff = 60.0, 30.0
+        time.sleep(1.5)
+        assert 3 <= len(starts) <= 5                                # 3 quick retries, then it waits (it was dozens a second before)
+        assert r.app._fast_restarts >= 3 and r.app.plan.cycle <= 1     # and it did not burn through new shuffle cycles (the first death looks like a real finish)
+        assert r.display.frame565 is not None                       # the 'can't keep playing' screen is up
+        n = len(starts)
+        r.swipe_up()                                                # change channel: try again at once
+        assert wait_for(lambda: len(starts) > n, timeout=2)
+    finally:
+        r.stop()

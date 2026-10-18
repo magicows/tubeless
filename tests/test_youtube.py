@@ -71,6 +71,27 @@ def test_a_single_video_listing():
     assert lst.kind == "video" and [(e.id, e.title) for e in lst.entries] == [(A, "Solo")]
 
 
+@pytest.mark.parametrize("state", ["is_live", "is_upcoming", "post_live"])
+def test_a_live_stream_is_refused_with_a_plain_message(state):
+    with pytest.raises(YouTubeError) as e:
+        parse_listing({"id": A, "title": "Sky News", "is_live": state == "is_live", "live_status": state, "duration": None})
+    assert "live stream" in e.value.message and e.value.status == 422
+
+
+def test_a_finished_live_stream_is_an_ordinary_video():
+    lst = parse_listing({"id": A, "title": "Replay", "is_live": False, "live_status": "was_live", "duration": 3600})
+    assert [e.id for e in lst.entries] == [A]
+
+
+def test_live_entries_in_a_playlist_are_left_out_and_counted():
+    lst = parse_listing({"_type": "playlist", "title": "News", "entries": [
+        {"id": A, "title": "Recorded", "duration": 60.0}, {"id": B, "title": "Live now", "live_status": "is_live"},
+        {"id": C, "title": "Soon", "live_status": "is_upcoming"}]})
+    assert [e.id for e in lst.entries] == [A] and lst.skipped == 2
+    with pytest.raises(YouTubeError):                                              # a playlist of nothing but live streams
+        parse_listing({"_type": "playlist", "entries": [{"id": B, "title": "Live", "live_status": "is_live"}]})
+
+
 @pytest.mark.parametrize("data", [{"_type": "playlist", "entries": []}, {"id": "nope"}, [], None, "x"])
 def test_unusable_listings_say_so(data):
     with pytest.raises(YouTubeError):

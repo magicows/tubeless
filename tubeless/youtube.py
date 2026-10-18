@@ -145,6 +145,14 @@ class Listing:
     skipped: int = 0                    # private/deleted entries that can't be used
 
 
+LIVE_STATES = ("is_live", "is_upcoming", "post_live")        # not a finished video: it can't be downloaded, nor played from the start
+LIVE_MESSAGE = "That's a live stream, and live streams can't be played on the TV. Choose a recorded video or playlist instead."
+
+
+def is_live(info) -> bool:
+    return isinstance(info, dict) and (info.get("is_live") is True or info.get("live_status") in LIVE_STATES)
+
+
 def parse_listing(data: dict, url: str = "") -> Listing:
     """From `yt-dlp --flat-playlist -J` output (a playlist, or one video's info)."""
     if not isinstance(data, dict):
@@ -154,18 +162,20 @@ def parse_listing(data: dict, url: str = "") -> Listing:
         for e in data.get("entries") or []:
             vid = e.get("id") if isinstance(e, dict) else None
             title = (e.get("title") if isinstance(e, dict) else "") or ""
-            if not valid_id(vid) or title.startswith("[Private") or title.startswith("[Deleted") or vid in seen:
+            if not valid_id(vid) or title.startswith("[Private") or title.startswith("[Deleted") or vid in seen or is_live(e):
                 skipped += 1
                 continue
             seen.add(vid)
             dur = e.get("duration")
             entries.append(Entry(vid, title.strip() or vid, float(dur) if isinstance(dur, (int, float)) else None))
         if not entries:
-            raise YouTubeError("No videos found there. Is the playlist public (or unlisted)?")
+            raise YouTubeError("No videos found there. Is the playlist public (or unlisted)? (Live streams are left out.)")
         return Listing(str(data.get("title") or "YouTube playlist")[:100], "playlist", entries, skipped)
     vid = data.get("id")
     if not valid_id(vid):
         raise YouTubeError("That doesn't look like a YouTube video or playlist.")
+    if is_live(data):
+        raise YouTubeError(LIVE_MESSAGE, 422)
     dur = data.get("duration")
     return Listing(str(data.get("title") or vid)[:100], "video",
                    [Entry(vid, str(data.get("title") or vid).strip(), float(dur) if isinstance(dur, (int, float)) else None)])

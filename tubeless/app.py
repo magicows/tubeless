@@ -120,6 +120,10 @@ class App:
         self.index = LibraryIndex(self.library, self.store)
         self.updater = Updater(Path(__file__).resolve().parent.parent)
         self._hold_player = False              # true while start_transfer/start_setup stop the player on purpose
+        self.fast_death_seconds = 15.0         # a player that dies sooner than this after starting is failing, not finishing
+        self.restart_backoff = 60.0            # after 3 such deaths in a row, wait this long between restarts
+        self._fast_restarts = 0
+        self._last_restart = 0.0
         self.saved_wifi_wait = 20.0            # how long Upload waits for a saved network that hasn't connected yet (just after boot)
         self.online_wait = 45.0                # how long after boot we wait for Wi-Fi before offering setup
         self._notice, self._notice_until = "", 0.0
@@ -279,6 +283,17 @@ class App:
             self.display.show(image_to_565(render.render_standby(self.hw, self.cfg.standby_image)))
         except Exception as e:
             log.warning("could not show the standby picture: %s", e)
+
+    def _show_trouble(self) -> None:
+        """What the screen says while the player keeps failing and the TV waits before trying again."""
+        if self.display is None:
+            return
+        try:
+            img = render.render_message(self.hw, "CAN'T KEEP PLAYING", ["Something in this channel won't play.", "Trying again in a minute.",
+                                                                        "Swipe to change channel."], self.name)
+            self.display.show(image_to_565(img))
+        except Exception as e:
+            log.warning("could not show the trouble screen: %s", e)
 
     def finish_cycle(self) -> None:
         """You have been through everything: reshuffle and start a new cycle."""
@@ -632,6 +647,8 @@ class App:
         if kind != "tick":
             log.info("gesture %s", g[:2] if kind == "tap" else g)
             self.last_gesture = g
+            if self._fast_restarts >= 3 and kind == "swipe":        # you changed channel while the TV was backing off: try at once
+                self._fast_restarts, self._last_restart = 0, 0.0
         if kind == "tick":
             self._tick()
         elif kind == "wake":
@@ -768,25 +785,34 @@ class App:
     # ─────────────────────────────────────────
     def _monitor_loop(self) -> None:
         last_heartbeat = time.time()
-        last_restart = 0.0
         while not self.stop_event.wait(self.exit_check_every):
             try:
                 if self._hold_player or self.mode in ("shutdown", "empty", "transfer", "setup"):
                     continue
                 if not self.player.alive():
-                    if time.time() - last_restart < self.min_restart_gap:
+                    now = time.time()
+                    gap = self.restart_backoff if self._fast_restarts >= 3 else self.min_restart_gap
+                    if now - self._last_restart < gap:
                         continue
+                    ran = now - self._last_restart
+                    self._fast_restarts = self._fast_restarts + 1 if ran < self.fast_death_seconds else 0
                     pos, count = self._last_pos
                     # The player knows whether the playlist played through (exit status 0); fall back to where we last saw it.
-                    finished = bool(getattr(self.player, "finished_normally", lambda: False)()) or (
-                        pos is not None and count is not None and pos >= count - 2)
+                    # A player that died within seconds of starting did not play anything through, whatever it says.
+                    finished = self._fast_restarts == 0 and (bool(getattr(self.player, "finished_normally", lambda: False)()) or (
+                        pos is not None and count is not None and pos >= count - 2))
                     log.info("player is not running (%s) - restarting", "playlist finished" if finished else "crashed")
-                    self._show_standby()
+                    if self._fast_restarts >= 3:
+                        log.warning("the player keeps stopping straight after it starts; waiting %.0f s between restarts "
+                                    "(swipe to change channel)", self.restart_backoff)
+                        self._show_trouble()
+                    else:
+                        self._show_standby()
                     if finished:
                         self.finish_cycle()
                     else:
                         self.start_playback()
-                    last_restart = last_heartbeat = time.time()
+                    self._last_restart = last_heartbeat = time.time()
                     continue
                 if time.time() - last_heartbeat >= HEARTBEAT_EVERY:
                     last_heartbeat = time.time()
@@ -795,7 +821,7 @@ class App:
                     except Exception as e:
                         log.warning("player heartbeat failed (%s) - restarting", e)
                         self.start_playback()
-                        last_restart = time.time()
+                        self._last_restart = time.time()
             except Exception:
                 log.exception("monitor error")
 
