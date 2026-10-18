@@ -462,6 +462,7 @@ $('newgo').onclick = async () => {
     const r = await api('/api/channel', {method: 'POST', body: JSON.stringify({name, kind: newKind})});
     $('newbox').classList.add('hide'); await load();
     if (newKind === 'youtube') openYt(r.channel);
+    else { $('channel').value = r.channel; $('newChannel').classList.add('hide'); }       // the Upload tab now points at the new channel
   } catch (e) { say($('newmsg'), e.message, 'bad'); }
 };
 $('newname').addEventListener('keydown', e => { if (e.key === 'Enter') $('newgo').click(); });
