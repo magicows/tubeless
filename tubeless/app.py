@@ -38,6 +38,7 @@ from .wifi import HOTSPOT_IP, Wifi, new_hotspot_credentials, wifi_qr_text
 
 log = logging.getLogger(__name__)
 
+STARTUP_GRACE = 10.0               # seconds after mpv starts before its control socket is expected to answer
 HEARTBEAT_EVERY = 60          # seconds between "is the player still answering?" checks
 EXIT_CHECK_EVERY = 2          # seconds between "has the player exited?" checks
 MIN_RESTART_GAP = 5           # so a crash-looping player can't spin the CPU
@@ -814,7 +815,7 @@ class App:
                         self.start_playback()
                     self._last_restart = last_heartbeat = time.time()
                     continue
-                if time.time() - last_heartbeat >= HEARTBEAT_EVERY:
+                if time.time() - last_heartbeat >= HEARTBEAT_EVERY and time.time() - getattr(self.player, "started_at", 0.0) > STARTUP_GRACE:
                     last_heartbeat = time.time()
                     try:
                         self.player.command("get_property", "pause")

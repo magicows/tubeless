@@ -93,6 +93,7 @@ class MpvPlayer:
     def __init__(self, cfg: Config, hw: Hardware):
         self.cfg, self.hw = cfg, hw
         self.proc: Optional[subprocess.Popen] = None
+        self.started_at = 0.0                    # when mpv was last started: its control socket takes a moment to appear
         self.ipc = MpvIPC(cfg.mpv_socket)
         shm = Path("/dev/shm")
         self.overlay_file = str((shm if shm.is_dir() else Path(tempfile.gettempdir())) / "tubeless-overlay.raw")
@@ -118,6 +119,7 @@ class MpvPlayer:
         finally:
             if out is not subprocess.DEVNULL:
                 out.close()
+        self.started_at = time.time()
         log.info("started mpv PID %s", self.proc.pid)
 
     def _youtube_options(self) -> list:

@@ -456,3 +456,25 @@ def test_a_player_that_keeps_dying_at_once_is_not_restarted_in_a_tight_loop(tmp_
         assert wait_for(lambda: len(starts) > n, timeout=2)
     finally:
         r.stop()
+
+
+def test_no_heartbeat_check_right_after_the_player_starts(tmp_path):
+    """mpv's control socket takes a moment to appear; a heartbeat in that moment used to restart a perfectly good player."""
+    r = Rig(tmp_path)
+    try:
+        calls = []
+        real = r.player.command
+        r.player.command = lambda *a: (calls.append(a), real(*a))[1]
+        r.player.started_at = time.time()                           # mpv has just been started
+        import tubeless.app as appmod
+        old = appmod.HEARTBEAT_EVERY
+        appmod.HEARTBEAT_EVERY = 0.0                                # a heartbeat is due at every check
+        try:
+            time.sleep(0.5)
+            assert not [c for c in calls if c[:2] == ("get_property", "pause") and len(c) == 2]
+            r.player.started_at = time.time() - 60                  # ... but once mpv has been up a while it is checked
+            assert wait_for(lambda: any(c == ("get_property", "pause") for c in calls), timeout=2)
+        finally:
+            appmod.HEARTBEAT_EVERY = old
+    finally:
+        r.stop()
