@@ -35,4 +35,6 @@ say "Checksum OK."
 tar -xzf "$NAME.tar.gz"
 [ -f "$NAME/install.sh" ] || die "the release has no install.sh"
 cd "$NAME"
-exec sh install.sh "$@"
+status=0
+sh install.sh "$@" || status=$?              # not exec: the cleanup above has to run afterwards
+exit "$status"
