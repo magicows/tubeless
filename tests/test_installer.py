@@ -41,6 +41,7 @@ dtoverlay=waveshare-touch-28dpi
 dtoverlay=vc4-kms-dpi-2inch8
 dtparam=audio=on
 dtoverlay=audremap,enable_jack,pins_18_19
+dtoverlay=sdio,sdio_overclock=25
 """
 
 TRIXIE_CMDLINE = ("console=serial0,115200 console=tty1 root=PARTUUID=ff65591c-02 rootfstype=ext4 fsck.repair=yes rootwait "
@@ -57,6 +58,7 @@ def test_config_adds_what_is_missing_in_the_all_section_and_keeps_everything_els
         assert line in out.splitlines()                          # nothing of the original was lost
     block = out.split(installer.BEGIN)[1].split(installer.END)[0].split()
     assert "dtoverlay=vc4-kms-dpi-2inch8" in block and "dtoverlay=audremap,enable_jack,pins_18_19" in block
+    assert "dtoverlay=sdio,sdio_overclock=25" in block                                    # the Wi-Fi chip's bus at half speed
     assert "dtoverlay=vc4-kms-v3d" not in block and "dtparam=audio=on" not in block      # already there: not repeated
     assert out.index(installer.BEGIN) > out.rindex("[all]")
 

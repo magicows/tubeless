@@ -1,6 +1,7 @@
 import threading
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -263,9 +264,126 @@ def test_upload_waits_for_a_saved_network_that_is_still_connecting_after_boot(tm
 
 def test_upload_offers_setup_if_the_saved_network_never_connects(tmp_path):
     from test_modes import button_centre
-    r = Rig(tmp_path, channels={"1.nothing": ["notes.txt"]}, wifi=FakeWifi(ip=None, saved=True), setup_auto=False)
+    never = FakeWifi(ip=None, saved=True)
+    never.recovers = False                                                       # not even a chip reload brings it back
+    r = Rig(tmp_path, channels={"1.nothing": ["notes.txt"]}, wifi=never, setup_auto=False)
     try:
         r.tap(*button_centre("upload"))
         assert wait_for(lambda: r.state["mode"] == "setup", timeout=4)                    # after the short wait
     finally:
         r.stop()
+
+
+# ---- a crashed Wi-Fi chip is brought back ---------------------------------------------------------------------------------
+def calls_of(wifi, name):
+    return [c for c in wifi.calls if c[0] == name]
+
+
+def test_when_the_network_vanishes_the_wifi_chip_is_reloaded_once_and_the_network_returns(tmp_path):
+    wifi = FakeWifi(ip="192.168.1.9", saved=True)
+    r = Rig(tmp_path, wifi=wifi, setup_auto=False)
+    try:
+        time.sleep(0.5)
+        assert calls_of(wifi, "recover") == []                                    # a healthy network is left alone
+        wifi.ip = None                                                            # the chip crashes
+        assert wait_for(lambda: len(calls_of(wifi, "recover")) == 1, timeout=4)
+        assert wait_for(lambda: wifi.connected_ip() is not None)                  # and recovery brought it back
+        time.sleep(1.0)
+        assert len(calls_of(wifi, "recover")) == 1                                # it does not keep poking a working network
+    finally:
+        r.stop()
+
+
+def test_a_recovery_that_fails_is_retried_later_not_in_a_tight_loop(tmp_path):
+    wifi = FakeWifi(ip=None, saved=True)
+    wifi.recovers = False
+    r = Rig(tmp_path, wifi=wifi, setup_auto=False)
+    try:
+        assert wait_for(lambda: len(calls_of(wifi, "recover")) == 1, timeout=4)
+        time.sleep(0.5)
+        assert len(calls_of(wifi, "recover")) == 1                                # the wait between tries is respected (0.8 s here)
+        assert wait_for(lambda: len(calls_of(wifi, "recover")) == 2, timeout=4)
+    finally:
+        r.stop()
+
+
+def test_no_chip_reload_without_a_saved_network_or_while_setup_is_running(tmp_path):
+    wifi = FakeWifi(ip=None, saved=False)                                         # never had Wi-Fi set up: nothing to recover
+    r = Rig(tmp_path, wifi=wifi, setup_auto=False)
+    try:
+        time.sleep(1.2)
+        assert calls_of(wifi, "recover") == []
+        r.app.mode = "setup"                                                      # the TV is hosting its own hotspot
+        wifi.saved = True
+        time.sleep(1.2)
+        assert calls_of(wifi, "recover") == []
+    finally:
+        r.stop()
+
+
+# ---- the root helper's `recover` ----------------------------------------------------------------------------------------
+def load_helper():
+    import importlib.machinery as m, importlib.util as u
+    path = Path(__file__).resolve().parent.parent / "packaging" / "tubeless-wifi-helper"
+    loader = m.SourceFileLoader("wifi_helper", str(path))
+    h = u.module_from_spec(u.spec_from_loader("wifi_helper", loader))
+    loader.exec_module(h)
+    return h
+
+
+def fake_sysfs(tmp_path, wifi_has_type=True):
+    """/sys/class/mmc_host with the Pi's two hosts: mmc0 (the SD card the system boots from) and mmc1 (the Wi-Fi chip)."""
+    root = tmp_path / "sys"
+    for host, dev, drv in (("mmc0", "3f202000.mmc", "sdhost-bcm2835"), ("mmc1", "3f300000.mmcnr", "mmc-bcm2835")):
+        (root / "devices" / dev).mkdir(parents=True)
+        (root / "drivers" / drv).mkdir(parents=True)
+        for f in ("bind", "unbind"):
+            (root / "drivers" / drv / f).write_text("")
+        (root / "devices" / dev / "driver").symlink_to(root / "drivers" / drv)
+        (root / "class" / host).mkdir(parents=True)
+        (root / "class" / host / "device").symlink_to(root / "devices" / dev)
+    (root / "class" / "mmc0" / "mmc0:aaaa" / "block").mkdir(parents=True)               # the SD card has a disk on it
+    (root / "class" / "mmc1" / "mmc1:0001").mkdir(parents=True)
+    if wifi_has_type:
+        (root / "class" / "mmc1" / "mmc1:0001" / "type").write_text("SDIO\n")
+    return root
+
+
+def test_the_helper_finds_the_wifi_chips_controller_and_never_the_sd_cards(tmp_path):
+    h = load_helper()
+    root = fake_sysfs(tmp_path)
+    device, driver = h.sdio_host(str(root / "class"))
+    assert device == "3f300000.mmcnr" and driver.endswith("drivers/mmc-bcm2835")
+    root2 = fake_sysfs(tmp_path / "b", wifi_has_type=False)                              # the chip is dead: no card type to read
+    assert h.sdio_host(str(root2 / "class"))[0] == "3f300000.mmcnr"                         # still found: it is the host with no disk
+    only_disk = tmp_path / "c"
+    (only_disk / "class" / "mmc0" / "mmc0:aaaa" / "block").mkdir(parents=True)
+    assert h.sdio_host(str(only_disk / "class")) is None                                  # nothing but the boot SD card: touch nothing
+    assert h.sdio_host(str(tmp_path / "missing")) is None
+
+
+def test_the_helper_reloads_the_driver_and_reseats_the_bus_in_order(tmp_path, monkeypatch):
+    h = load_helper()
+    root = fake_sysfs(tmp_path)
+    ran = []
+    monkeypatch.setattr(h.subprocess, "run", lambda cmd, **kw: (ran.append(cmd), h.subprocess.CompletedProcess(cmd, 0, "", ""))[1])
+    monkeypatch.setattr(h, "wifi_device", lambda: "wlan0")
+    monkeypatch.setattr(h.time, "sleep", lambda s: None)
+    assert h.cmd_recover(str(root / "class"), settle=0, wait_for_device=2) == 0
+    modprobes = [c[-2:] if c[-2] == "-r" else c[-1:] for c in ran if "modprobe" in c[0]]
+    assert modprobes == [["-r", "brcmfmac_wcc"], ["-r", "brcmfmac_cyw"], ["-r", "brcmfmac_bca"], ["-r", "brcmfmac"], ["brcmfmac"]]
+    drv = root / "drivers" / "mmc-bcm2835"
+    assert (drv / "unbind").read_text() == "3f300000.mmcnr" and (drv / "bind").read_text() == "3f300000.mmcnr"
+    assert (root / "drivers" / "sdhost-bcm2835" / "unbind").read_text() == ""             # the boot SD card's controller was not touched
+    assert ["/usr/bin/nmcli", "radio", "wifi", "on"] in ran
+
+
+def test_the_helper_says_so_when_the_chip_does_not_come_back_or_cannot_be_found(tmp_path, monkeypatch, capsys):
+    h = load_helper()
+    root = fake_sysfs(tmp_path)
+    monkeypatch.setattr(h.subprocess, "run", lambda cmd, **kw: h.subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(h, "wifi_device", lambda: None)
+    monkeypatch.setattr(h.time, "sleep", lambda s: None)
+    assert h.cmd_recover(str(root / "class"), settle=0, wait_for_device=2) == 1
+    assert h.cmd_recover(str(tmp_path / "nothing"), settle=0, wait_for_device=1) == 3
+    assert h.main(["helper", "recover", "extra"]) == 64                                     # no arguments are accepted

@@ -57,6 +57,7 @@ class Rig:
         self.app.online_wait = 0.3
         self.app.saved_wifi_wait = 0.5
         self.app.update_notice_seconds = 0.3
+        self.app.net_check_every, self.app.net_down_grace, self.app.net_recover_every = 0.1, 0.4, 0.8
         self.app.exit_check_every = 0.05
         self.app.min_restart_gap = 0.0
         self.app.progress_save_every = 0.1

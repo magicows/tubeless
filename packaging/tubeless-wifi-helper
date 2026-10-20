@@ -10,11 +10,15 @@ argument itself. Passwords come in on stdin, never on the command line.
     wifi-helper hotspot-down
     wifi-helper connect SSID              join a network (password on stdin, empty for an open network)
     wifi-helper has-saved                 prints "yes" if any Wi-Fi network has been saved, else "no"
+    wifi-helper recover                   bring a crashed Wi-Fi chip back: reload its driver and re-seat its bus
 """
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+import time
 
 HOTSPOT = "tubeless-hotspot"
 NMCLI = "/usr/bin/nmcli"
@@ -141,6 +145,62 @@ def cmd_connect(ssid):
     return 0
 
 
+def sdio_host(sysfs="/sys/class/mmc_host"):
+    """The SD host controller the Wi-Fi chip hangs off: (device name, path of its driver's directory), or None.
+    It is the host with an SDIO card on it, or failing that one that is not carrying a disk. NEVER the one with the SD card
+    the system boots from (anything with a block device): rebinding that would take the whole system down."""
+    try:
+        hosts = sorted(os.listdir(sysfs))
+    except OSError:
+        return None
+    candidates = []
+    for host in hosts:
+        base = os.path.join(sysfs, host)
+        cards = [d for d in os.listdir(base) if d.startswith(host + ":")] if os.path.isdir(base) else []
+        if any(os.path.exists(os.path.join(base, c, "block")) for c in cards):
+            continue                                              # has a disk: not ours to touch
+        device, driver = os.path.join(base, "device"), os.path.join(base, "device", "driver")
+        if not (os.path.islink(device) and os.path.islink(driver)):
+            continue
+        is_sdio = False
+        for c in cards:
+            try:
+                is_sdio = is_sdio or "SDIO" in open(os.path.join(base, c, "type")).read()
+            except OSError:
+                pass
+        candidates.append((is_sdio, os.path.basename(os.path.realpath(device)), os.path.realpath(driver)))
+    sdio = [c for c in candidates if c[0]]
+    pick = sdio[0] if sdio else (candidates[0] if len(candidates) == 1 else None)
+    return (pick[1], pick[2]) if pick else None
+
+
+def cmd_recover(sysfs="/sys/class/mmc_host", settle=2.0, wait_for_device=25):
+    """The Pi Zero 2 W's Wi-Fi chip can crash under load and then stays dead. Reload its driver and re-seat its bus."""
+    host = sdio_host(sysfs)
+    if host is None:
+        print("could not find the Wi-Fi chip's controller", file=sys.stderr)
+        return 3
+    device, driver = host
+    modprobe = shutil.which("modprobe") or "/usr/sbin/modprobe"
+    for module in ("brcmfmac_wcc", "brcmfmac_cyw", "brcmfmac_bca", "brcmfmac"):   # the vendor parts first, then the base driver
+        subprocess.run([modprobe, "-r", module], capture_output=True, timeout=30)
+    for action in ("unbind", "bind"):
+        try:
+            with open(os.path.join(driver, action), "w") as f:
+                f.write(device)
+        except OSError as e:
+            print(f"{action} {device}: {e}", file=sys.stderr)
+        time.sleep(settle)
+    subprocess.run([modprobe, "brcmfmac"], capture_output=True, timeout=30)
+    for _ in range(wait_for_device):
+        if wifi_device():
+            run("radio", "wifi", "on")
+            return 0
+        time.sleep(1)
+    print("the Wi-Fi chip did not come back", file=sys.stderr)
+    return 1
+
+
 def main(argv):
     try:
         if argv[1:2] == ["scan"] and len(argv) == 2:
@@ -151,6 +211,8 @@ def main(argv):
             return cmd_hotspot_up(argv[2])
         if argv[1:2] == ["connect"] and len(argv) == 3:
             return cmd_connect(argv[2])
+        if argv[1:2] == ["recover"] and len(argv) == 2:
+            return cmd_recover()
         if argv[1:2] == ["has-saved"] and len(argv) == 2:
             print("yes" if wifi_profiles() else "no")
             return 0

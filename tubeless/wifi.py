@@ -76,6 +76,7 @@ class Wifi:
     def hotspot_up(self, ssid: str, password: str) -> Tuple[bool, str]: raise NotImplementedError
     def hotspot_down(self) -> None: raise NotImplementedError
     def connect(self, ssid: str, password: str) -> Tuple[bool, str]: raise NotImplementedError
+    def recover(self) -> Tuple[bool, str]: raise NotImplementedError
 
 
 class NetworkManagerWifi(Wifi):
@@ -131,6 +132,14 @@ class NetworkManagerWifi(Wifi):
         except (OSError, subprocess.SubprocessError):
             pass
 
+    def recover(self) -> Tuple[bool, str]:
+        """The Wi-Fi chip crashed and the network is gone: reload its driver (root helper). Takes up to half a minute."""
+        try:
+            res = self._helper("recover", timeout=120)
+        except (OSError, subprocess.SubprocessError) as e:
+            return False, str(e)
+        return res.returncode == 0, res.stderr.strip()
+
     def connect(self, ssid: str, password: str) -> Tuple[bool, str]:
         try:
             res = self._helper("connect", ssid, stdin=password, timeout=90)
@@ -148,6 +157,7 @@ class FakeWifi(Wifi):
         self.networks = networks if networks is not None else [Network("HomeWiFi", 80), Network("Neighbour", 45), Network("CafeOpen", 30, False)]
         self.accepts = accepts if accepts is not None else {"HomeWiFi": "correct horse"}      # ssid -> password
         self.delay = delay
+        self.recovers, self.ip_after_recovery = True, "192.168.1.50"          # does a recover() bring the network back?
         self.hotspot: Optional[Tuple[str, str]] = None
         self.calls: List[tuple] = []
 
@@ -166,6 +176,12 @@ class FakeWifi(Wifi):
     def hotspot_down(self):
         self.calls.append(("hotspot_down",))
         self.hotspot = None
+
+    def recover(self):
+        self.calls.append(("recover",))
+        if self.recovers:
+            self.ip = self.ip_after_recovery
+        return self.recovers, "" if self.recovers else "the Wi-Fi chip did not come back"
 
     def connect(self, ssid, password):
         self.calls.append(("connect", ssid))

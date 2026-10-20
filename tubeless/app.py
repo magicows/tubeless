@@ -133,6 +133,11 @@ class App:
                                marker=self.cfg.data / "updated.json")
         self._hold_player = False              # true while start_transfer/start_setup stop the player on purpose
         self.update_notice_seconds = 4.0       # how long 'update complete' stays over the video
+        self.net_check_every = 20.0            # how often the Wi-Fi guard looks
+        self.net_down_grace = 120.0            # the network must be gone this long before the Wi-Fi chip is reloaded
+        self.net_recover_every = 600.0         # ... and it is not tried more often than this
+        self._net_down_since: Optional[float] = None
+        self._net_last_recover = 0.0
         self.fast_death_seconds = 15.0         # a player that dies sooner than this after starting is failing, not finishing
         self.restart_backoff = 60.0            # after 3 such deaths in a row, wait this long between restarts
         self._fast_restarts = 0
@@ -230,7 +235,7 @@ class App:
             self.begin_calibration(first_run=True)            # a brand new install starts by calibrating touch
 
     def start_threads(self) -> None:
-        for target in (self._worker_loop, self._monitor_loop, self._tracker_loop, self._watch_for_network):
+        for target in (self._worker_loop, self._monitor_loop, self._tracker_loop, self._watch_for_network, self._wifi_guard_loop):
             t = threading.Thread(target=target, daemon=True)
             t.start()
             self._threads.append(t)
@@ -1104,6 +1109,40 @@ class App:
 
     def online(self) -> bool:
         return not self.wifi_available or self.wifi.connected_ip() is not None
+
+    def _wifi_guard_loop(self) -> None:
+        while not self.stop_event.wait(self.net_check_every):
+            try:
+                self._wifi_guard()
+            except Exception:
+                log.exception("Wi-Fi guard error")
+
+    def _wifi_guard(self) -> None:
+        """The Pi Zero 2 W's Wi-Fi chip can crash under load (streaming video did it) and then stays dead until the Pi restarts.
+        If a saved network has been gone for a couple of minutes, reload the chip's driver and re-seat its bus (root helper)."""
+        if not self.wifi_available or self.mode not in ("play", "empty", "transfer"):
+            self._net_down_since = None                          # not while the TV is hosting its own setup hotspot, etc.
+            return
+        if self.wifi.connected_ip() is not None:
+            if self._net_down_since is not None:
+                log.info("the network is back")
+            self._net_down_since = None
+            return
+        now = time.time()
+        if self._net_down_since is None:
+            self._net_down_since = now
+            return
+        if now - self._net_down_since < self.net_down_grace or now - self._net_last_recover < self.net_recover_every:
+            return
+        if not self.wifi.has_saved():
+            return                                                # nothing to reconnect to: not a crash, just no network set up
+        self._net_last_recover = now
+        log.warning("the network has been gone for %.0f s: reloading the Wi-Fi chip's driver", now - self._net_down_since)
+        ok, why = self.wifi.recover()
+        if ok:
+            log.info("the Wi-Fi chip is back")
+        else:
+            log.warning("could not bring the Wi-Fi chip back: %s", why)
 
     def _watch_for_network(self) -> None:
         """First boot with no Wi-Fi saved at all: after a grace period, start setup by itself. A TV that has a network
