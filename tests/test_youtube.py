@@ -198,7 +198,7 @@ def test_sync_downloads_what_is_ticked_one_at_a_time(root):
     files = sorted(p.name for p in (root / name).glob("*.mp4"))
     assert files == [f"Video a [{A}].mp4", f"Video b [{B}].mp4"]
     assert [c for c in fake.calls if c[0] == "download"] == [("download", A), ("download", B)]
-    assert m.summaries()[name] == {"mode": "download", "total": 3, "selected": 2, "done": 2, "waiting": 0, "error": 0, "off": 1}
+    assert m.summaries()[name] == {"mode": "download", "total": 3, "selected": 2, "done": 2, "waiting": 0, "error": 0, "off": 1, "new": 0}
     assert m.sync(name) == 0                                                # nothing left to fetch
     assert not any(p.name.startswith(".") and p.is_file() for p in (root / name).iterdir())
 
@@ -452,3 +452,76 @@ def test_a_ytdlp_without_a_pip_beside_it_cannot_be_updated(tmp_path):
     assert not yt.can_update()
     with pytest.raises(YouTubeError):
         yt.update()
+
+
+# ---- looking for new videos in a channel's playlists ---------------------------------------------------------------
+E, F = "eeeeeeeeeee", "fffffffffff"
+PL = "https://www.youtube.com/playlist?list=PLlistlist12"
+
+
+def channel_with_playlist(root, **kw):
+    mgr, fake = make(root, **kw)
+    mgr.create("1.cartoons")
+    mgr.add("1.cartoons", PL, [A, B])                           # you ticked A and B; C is in the channel, unticked
+    return mgr, fake
+
+
+def test_refresh_adds_new_videos_unticked_and_marked_and_downloads_nothing(root):
+    mgr, fake = channel_with_playlist(root)
+    fake.listings["PLlistlist12"] = listing(A, B, C, E, F, title="Cartoons")           # the playlist grew by two
+    result = mgr.refresh_sources("1.cartoons")
+    assert result == {"found": {"1.cartoons": 2}, "errors": []}
+    items = {i["id"]: i for i in mgr.info("1.cartoons")["items"]}
+    assert items[E]["new"] and items[F]["new"] and not items[E]["selected"] and not items[F]["selected"]
+    assert items[A]["selected"] and items[B]["selected"] and not items[C]["selected"] and not items[A]["new"]      # yours untouched
+    assert not mgr.busy() and not any(c[0] == "download" for c in fake.calls)                                       # nothing was fetched
+    assert mgr.summaries()["1.cartoons"]["new"] == 2
+
+
+def test_a_second_refresh_finds_nothing_new_and_never_removes(root):
+    mgr, fake = channel_with_playlist(root)
+    fake.listings["PLlistlist12"] = listing(A, B, C, E, title="Cartoons")
+    mgr.refresh_sources()
+    fake.listings["PLlistlist12"] = listing(A, E, title="Cartoons")                    # B and C vanished from the playlist
+    assert mgr.refresh_sources()["found"] == {}
+    assert {i["id"] for i in mgr.info("1.cartoons")["items"]} == {A, B, C, E}          # still all there
+
+
+def test_ticking_a_new_video_clears_its_mark_and_seen_clears_the_rest(root):
+    mgr, fake = channel_with_playlist(root)
+    fake.listings["PLlistlist12"] = listing(A, B, C, E, F, title="Cartoons")
+    mgr.refresh_sources()
+    mgr.set_selection("1.cartoons", [A, B, E])
+    items = {i["id"]: i for i in mgr.info("1.cartoons")["items"]}
+    assert not items[E]["new"] and items[E]["selected"] and items[F]["new"]
+    assert mgr.mark_seen("1.cartoons") == 1
+    assert mgr.summaries()["1.cartoons"]["new"] == 0 and F in {i["id"] for i in mgr.info("1.cartoons")["items"]}
+
+
+def test_refresh_skips_single_videos_and_reports_a_playlist_that_fails(root):
+    mgr, fake = channel_with_playlist(root)
+    mgr.add("1.cartoons", "https://www.youtube.com/watch?v=" + D)                        # a single video: nothing to re-read
+    del fake.listings["PLlistlist12"]                                                    # and the playlist can't be read now
+    before = len(fake.calls)
+    result = mgr.refresh_sources()
+    assert result["found"] == {} and len(result["errors"]) == 1 and "Cartoons" in result["errors"][0]
+    asked = [c for c in fake.calls[before:] if c[0] == "listing"]
+    assert len(asked) == 1 and "PLlistlist12" in asked[0][1]                             # only the playlist was looked up
+
+
+def test_refresh_in_the_background_reports_progress(root):
+    mgr, fake = channel_with_playlist(root)
+    fake.listings["PLlistlist12"] = listing(A, B, C, E, title="Cartoons")
+    assert mgr.start_refresh()["running"] is True
+    assert wait_until(lambda: mgr.progress()["refresh"]["finished_at"] is not None)
+    p = mgr.progress()["refresh"]
+    assert p["running"] is False and p["found"] == {"1.cartoons": 1} and p["done"] == p["total"] == 1
+
+
+def test_refresh_needs_ytdlp_and_a_real_channel(root):
+    mgr, fake = make(root, fake={"is_available": False})
+    with pytest.raises(YouTubeError):
+        mgr.start_refresh()
+    mgr2, _ = make(root)
+    with pytest.raises(YouTubeError):
+        mgr2.start_refresh("9.nothing")

@@ -68,8 +68,8 @@ selection. Everything after the source (static between episodes, shuffle, resume
 the player a list of things to play and their lengths. Channels are created and edited on the web companion, never on the TV.
 
 * **YouTube playlist** (opt in). *Built:* download or stream, per-video ticking, merging playlists and single videos, error messages
-  on the TV, `--with-youtube` installer step, daily yt-dlp watch workflow (opens an issue if a new yt-dlp breaks it). The page's TV tab has a yt-dlp card (version, check, update). Still to do: a
-  "Sync now" outside the phone page. Original notes: (Wi-Fi needed for streaming). Public or unlisted playlists only, no sign-in. The user pastes a playlist URL on the
+  on the TV, `--with-youtube` installer step, daily yt-dlp watch workflow (opens an issue if a new yt-dlp breaks it). The page's TV tab has a yt-dlp card (version, check, update). New videos in a channel's playlists are found each time upload mode starts and marked on the page, unticked
+  (downloads only ever happen on the upload page, by your choice). Original notes: (Wi-Fi needed for streaming). Public or unlisted playlists only, no sign-in. The user pastes a playlist URL on the
   companion page, and picks per channel:
   * **Download for offline** (ticked): the TV fetches 480p H.264 files into the channel's folder while on Wi-Fi, then plays them like
     any local file. Most robust: no buffering, works offline.

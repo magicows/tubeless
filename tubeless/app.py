@@ -1021,6 +1021,11 @@ class App:
         log.info("upload page on %s (PIN shown on the TV)", self.web_info["urls"])
         self.mode = "transfer"
         self._hold_player = False
+        try:
+            if self.youtube.yt.available():
+                self.youtube.start_refresh()            # look for new videos in your playlists (a listing only: nothing is downloaded)
+        except Exception:
+            log.exception("could not start checking playlists")
         self.index.start_scan()                         # the player is stopped, so reading durations costs playback nothing
         self._screen_dirty = True
         self._draw_screen()

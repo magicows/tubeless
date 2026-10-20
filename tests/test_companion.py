@@ -146,3 +146,34 @@ def test_ytdlp_can_be_checked_and_updated_from_the_page(tv):
     tv.fake.can_update_it = False
     status, body = call(tv, "POST", "/api/yt/ytdlp/update", {})
     assert status == 400 and "wasn't installed by Tubeless" in body["error"]
+
+
+def test_the_tv_looks_for_new_playlist_videos_when_upload_mode_starts_and_never_downloads(tmp_path):
+    from tubeless.youtube import ChannelFile
+    folder = tmp_path / "videos" / "3.yt"
+    folder.mkdir(parents=True)
+    cf = ChannelFile(folder)
+    cf.sources = [{"url": PLAYLIST, "title": "Cartoons", "kind": "playlist"}]
+    cf.items = [{"id": A, "title": "One", "duration": 60.0, "selected": True, "file": None, "error": None}]
+    cf.save()
+    fake = FakeYtDlp({"PLlistlist12": Listing("Cartoons", "playlist", [Entry(A, "One", 60.0), Entry(B, "Two", 70.0)])})
+    r = Rig(tmp_path, channels={"1.nothing": ["notes.txt"]}, ytdlp=fake)
+    try:
+        r.tap(*button_centre("upload"))
+        assert wait_for(lambda: r.state["mode"] == "transfer")
+        info = r.app.web_info
+        base = f"http://127.0.0.1:{info['port']}"
+        token = http(base, "POST", "/api/login", {"pin": info["pin"]})[1]["token"]
+        assert wait_for(lambda: http(base, "GET", "/api/yt/progress", None, token)[1]["refresh"]["finished_at"], timeout=5)
+        status, ch = http(base, "GET", "/api/yt/channel?channel=3.yt", None, token)
+        new = [i for i in ch["items"] if i["new"]]
+        assert [i["id"] for i in new] == [B] and not new[0]["selected"]
+        assert not any(c[0] == "download" for c in fake.calls)                                  # a listing, never a download
+        assert http(base, "GET", "/api/state", None, token)[1]["youtube"]["available"] is True
+        # the page can ask again, and can say 'not interested'
+        assert http(base, "POST", "/api/yt/refresh", {}, None)[0] == 401
+        assert http(base, "POST", "/api/yt/refresh", {"channel": "3.yt"}, token)[0] == 200
+        assert http(base, "POST", "/api/yt/seen", {"channel": "3.yt"}, token)[1] == {"cleared": 1}
+        assert not any(i["new"] for i in http(base, "GET", "/api/yt/channel?channel=3.yt", None, token)[1]["items"])
+    finally:
+        r.stop()

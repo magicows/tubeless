@@ -470,6 +470,10 @@ class WebServer:
                         self._yt_call(lambda: (yt.set_mode(ch, str(data.get("mode", ""))), {"mode": data.get("mode")})[1])
                     elif route == "/api/yt/sync":
                         self._yt_call(lambda: {"queued": yt.sync(ch or None)})
+                    elif route == "/api/yt/refresh":
+                        self._yt_call(lambda: yt.start_refresh(ch or None))
+                    elif route == "/api/yt/seen":
+                        self._yt_call(lambda: {"cleared": yt.mark_seen(ch)})
                     elif route == "/api/yt/ytdlp/check":
                         self._yt_call(yt.check_ytdlp)
                     elif route == "/api/yt/ytdlp/update":

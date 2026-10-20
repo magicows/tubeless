@@ -68,6 +68,11 @@ don't want. Later you can paste another playlist, or one video, and it merges in
   the phone page.
 * Public and unlisted playlists only. There is no YouTube sign-in.
 
+**New videos in your playlists.** Each time the upload page starts, the TV looks through the playlists your YouTube channels were built
+from (this only reads the lists, it downloads nothing). Anything new shows on the page marked **New** and unticked, with the count in the
+channel list. Tick the ones you want, save, and press Download. **Check for new videos** on the Channels tab looks again, and
+**Not interested** clears the marks. Nothing is ever downloaded, ticked or removed for you.
+
 This needs two extras, which the installer adds when you ask (`--with-youtube`, see [Install](#install-on-a-fresh-pi)):
 [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg. Tubeless does not include either. YouTube changes often, so keep yt-dlp current. The upload page's TV tab has a **YouTube downloader** card that shows the
 version, checks for a newer one and updates it (not while videos are downloading). Or from a shell on the TV:

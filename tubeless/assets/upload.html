@@ -46,6 +46,7 @@
   .item:first-child { border-top:0; } .item input[type=checkbox] { width:22px; height:22px; margin-top:2px; flex:0 0 auto; accent-color:var(--accent); }
   .item .t { flex:1; min-width:0; word-break:break-word; font-size:15px; } .item .m { color:var(--dim); font-size:12px; }
   .chip { font-size:11px; padding:2px 8px; border-radius:20px; white-space:nowrap; border:1px solid var(--line); color:var(--dim); }
+  .chip.new { color:#ffd65a; border-color:#6b5a1d; }
   .chip.done { color:var(--accent); border-color:#1d5a34; } .chip.error { color:var(--bad); border-color:#5a2a2a; } .chip.waiting { color:var(--info); border-color:#24435a; }
   .listbox { max-height:46vh; overflow:auto; border:1px solid var(--line); border-radius:10px; padding:2px 10px; margin:10px 0; background:#0d150f; }
   .bar2 { height:8px; background:#0b130d; border-radius:6px; overflow:hidden; margin:8px 0 4px; } .bar2 > i { display:block; height:100%; width:0; background:var(--accent); transition:width .4s; }
@@ -75,7 +76,8 @@
         <h2>Your channels</h2>
         <div id="channels"></div>
         <p class="sub" id="scanline" style="margin-top:10px"></p>
-        <div class="row" style="margin-top:12px"><button class="ghost" id="rescan">Scan library</button><button class="ghost" id="newFolder">+ Folder channel</button><button class="ghost" id="newYt">+ YouTube channel</button></div>
+        <p class="sub hide" id="refreshline" style="margin-top:6px"></p>
+        <div class="row" style="margin-top:12px"><button class="ghost" id="rescan">Scan library</button><button class="ghost hide" id="ytrefresh">Check for new videos</button><button class="ghost" id="newFolder">+ Folder channel</button><button class="ghost" id="newYt">+ YouTube channel</button></div>
         <div id="newbox" class="hide" style="margin-top:12px"><label for="newname" id="newlabel">Name</label>
           <div class="row"><input id="newname" type="text" maxlength="40" autocomplete="off"><button id="newgo">Create</button></div><p class="msg" id="newmsg"></p></div>
       </section>
@@ -98,6 +100,10 @@
         <h2 style="margin-top:20px">In this channel</h2>
         <label class="check"><input type="checkbox" id="ytoffline" checked> <span>Download to the TV <small>so it plays with no Wi-Fi</small></span></label>
         <p class="sub hide" id="streamnote">Not downloading: the TV will play these straight from YouTube, which needs Wi-Fi and takes about 10 seconds to start each video. If one can't be played, the TV says so and moves on.</p>
+        <div id="newbanner" class="hide" style="margin:8px 0">
+          <p class="sub" id="newtext" style="margin:0 0 6px"></p>
+          <div class="toolbar"><button class="ghost" id="ticknew">Tick all the new ones</button><button class="ghost" id="markseen">Not interested</button></div>
+        </div>
         <div class="listbox" id="ytitems"></div>
         <p class="msg" id="ytsavemsg"></p>
         <div class="toolbar"><button id="ytsave" disabled>Save changes</button><button class="danger" id="ytdelete">Remove channel</button></div>
@@ -219,6 +225,7 @@ async function load() {
   renderSettings();
   loadStatus();
   if (!ytdlpTimer) loadYtdlp();
+  if (!refreshTimer) loadRefresh();
   loadStandby();
   if (!updTimer) loadUpdate();
   if (ytChannel) { const c = state.channels.find(x => x.name === ytChannel); if (!c) showChannelList(); }
@@ -289,6 +296,27 @@ $('logBtn').onclick = async () => {
     const box = $('logbox'); box.textContent = (await res.text()) || '(the log is empty)'; box.classList.remove('hide'); box.scrollTop = box.scrollHeight;
   } catch (e) { say($('setmsg'), e.message, 'bad'); }
 };
+
+let refreshTimer = null;
+function renderRefresh(p) {
+  const r = (p && p.refresh) || {}, has = state.channels.some(c => c.kind === 'youtube') && state.youtube && state.youtube.available;
+  $('ytrefresh').classList.toggle('hide', !has); $('ytrefresh').disabled = !!r.running;
+  const line = $('refreshline'); line.classList.toggle('hide', !has || !(r.running || r.finished_at));
+  if (r.running) line.textContent = 'Checking your playlists for new videos' + (r.total ? ': ' + r.done + ' of ' + r.total : '') + '...';
+  else if (r.finished_at) {
+    const n = Object.values(r.found || {}).reduce((a, b) => a + b, 0);
+    line.textContent = (n ? n + ' new video' + (n === 1 ? '' : 's') + ' found in your playlists. Open a YouTube channel to choose which to download.' : 'No new videos in your playlists.') + (r.errors && r.errors.length ? '  (' + r.errors.length + ' playlist' + (r.errors.length === 1 ? '' : 's') + ' could not be checked: ' + r.errors[0] + ')' : '');
+  }
+  if (r.running && !refreshTimer) refreshTimer = setInterval(loadRefresh, 2000);
+  if (!r.running && refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; load().catch(() => {}); }
+}
+async function loadRefresh() {
+  if (!(state.youtube && state.youtube.available) || !state.channels.some(c => c.kind === 'youtube')) return renderRefresh(null);
+  try { renderRefresh(await api('/api/yt/progress')); } catch (e) {}
+}
+$('ytrefresh').onclick = async () => { try { await api('/api/yt/refresh', {method: 'POST', body: '{}'}); await loadRefresh(); } catch (e) { $('refreshline').classList.remove('hide'); $('refreshline').textContent = e.message; } };
+$('ticknew').onclick = () => { ytData.items.filter(i => i.new).forEach(i => ticks.add(i.id)); dirty = true; renderYt(); $('ytsave').disabled = false; };
+$('markseen').onclick = async () => { try { await api('/api/yt/seen', {method: 'POST', body: JSON.stringify({channel: ytChannel})}); await refreshYt(false); await load(); } catch (e) { say($('ytsavemsg'), e.message, 'bad'); } };
 
 let ytdlpTimer = null;
 function renderYtdlp(u) {
@@ -479,7 +507,7 @@ function renderChannels() {
     left.append(el('div', 'nm', c.label));
     let sub = c.count + ' video' + (c.count === 1 ? '' : 's');
     if (c.kind !== 'youtube' && c.library && c.library.seconds) sub += '  -  ' + hours(c.library.seconds) + (c.library.unread ? '  (' + c.library.unread + ' not read yet)' : '');
-    if (c.kind === 'youtube') { const y = c.youtube; sub = y.done + ' on the TV' + (y.waiting ? ', ' + y.waiting + ' waiting' : '') + (y.error ? ', ' + y.error + ' with problems' : ''); }
+    if (c.kind === 'youtube') { const y = c.youtube; sub = y.done + ' on the TV' + (y.waiting ? ', ' + y.waiting + ' waiting' : '') + (y.error ? ', ' + y.error + ' with problems' : '') + (y.new ? ', ' + y.new + ' new' : ''); }
     left.append(el('div', 'sub2', sub));
     row.append(left, right);
     if (c.kind === 'youtube') row.onclick = () => openYt(c.name);
@@ -531,10 +559,13 @@ function renderYt() {
     cb.onchange = () => { cb.checked ? ticks.add(i.id) : ticks.delete(i.id); dirty = true; $('ytsave').disabled = false; };
     const t = el('div', 't'); t.append(el('div', '', i.title)); const meta = fmtDur(i.duration); if (meta) t.append(el('div', 'm', meta)); if (i.status === 'error' && i.error) t.append(el('div', 'm', i.error));
     const label = (i.status === 'waiting' && ytData.mode === 'stream') ? 'From YouTube' : {done: 'On the TV', waiting: 'Waiting', error: 'Problem', off: ''}[i.status];
-    row.append(cb, t); if (label) row.append(el('span', 'chip ' + i.status, label));
+    row.append(cb, t); if (i.new) row.append(el('span', 'chip new', 'New')); else if (label) row.append(el('span', 'chip ' + i.status, label));
     box.append(row);
     if (i.status === 'done') done++; else if (i.status === 'waiting') waiting++; else if (i.status === 'error') errors++;
   }
+  const newCount = items.filter(i => i.new).length;
+  $('newbanner').classList.toggle('hide', !newCount);
+  $('newtext').textContent = newCount + ' new video' + (newCount === 1 ? '' : 's') + ' in your playlists. They are unticked: tick the ones you want, then save and download.';
   $('ytoffline').checked = ytData.mode === 'download'; $('streamnote').classList.toggle('hide', ytData.mode === 'download');
   say($('ytsummary'), !items.length ? '' : ytData.mode === 'stream' ? (waiting + done) + ' video' + (waiting + done === 1 ? '' : 's') + ' will play from YouTube' + (done ? ' (' + done + ' already on the TV)' : '')
     : done + ' on the TV' + (waiting ? ', ' + waiting + ' waiting to download' : '') + (errors ? ', ' + errors + ' with problems' : ''));

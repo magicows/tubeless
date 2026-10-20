@@ -411,12 +411,13 @@ class ChannelFile:
         counts = {"done": 0, "waiting": 0, "error": 0, "off": 0}
         for i in self.items:
             counts[self.status(i)] += 1
-        return {"mode": self.mode, "total": len(self.items), "selected": len(self.items) - counts["off"], **counts}
+        return {"mode": self.mode, "total": len(self.items), "selected": len(self.items) - counts["off"], **counts,
+                "new": sum(1 for i in self.items if i.get("new"))}
 
     def as_dict(self) -> dict:
         return {"mode": self.mode, "sources": self.sources,
                 "items": [{"id": i["id"], "title": i["title"], "duration": i.get("duration"), "selected": bool(i.get("selected")),
-                           "status": self.status(i), "error": i.get("error")} for i in self.items]}
+                           "status": self.status(i), "error": i.get("error"), "new": bool(i.get("new"))} for i in self.items]}
 
 
 # ─────────────────────────────────────────────
@@ -427,6 +428,8 @@ class YouTubeManager:
                  on_change: Optional[Callable[[], None]] = None, cache_seconds: float = 600.0,
                  fetch_json: Callable[[str], dict] = default_fetch_json):
         self._fetch_json = fetch_json
+        self._refresh: dict = {"running": False, "done": 0, "total": 0, "found": {}, "errors": [], "finished_at": None}
+        self._refresh_cancel = threading.Event()
         self._ytdlp_state: dict = {"state": "idle"}
         self._ytdlp_latest: Optional[str] = None
         self.root = Path(root)
@@ -603,6 +606,87 @@ class YouTubeManager:
         self.on_change()
         return {"added": added, "already_there": there, "title": listing.title, "skipped": listing.skipped}
 
+    # -- looking for new videos in the playlists a channel was built from
+    def refresh_sources(self, channel: Optional[str] = None) -> dict:
+        """Re-read each playlist and add what is new to its channel, unticked and marked 'new': nothing is downloaded or ticked
+        for you, and nothing is ever removed. Blocking; start_refresh() runs it in the background."""
+        folders = [self._folder(channel)] if channel else [self.root / n for n in sorted(self.summaries())]
+        jobs = [(f, src) for f in folders for src in ChannelFile.load(f).sources if src.get("kind") == "playlist" and src.get("url")]
+        found: Dict[str, int] = {}
+        errors: List[str] = []
+        with self._lock:
+            self._refresh = {"running": True, "done": 0, "total": len(jobs), "found": {}, "errors": [], "finished_at": None}
+        for folder, src in jobs:
+            if self._refresh_cancel.is_set():
+                break
+            label = src.get("title") or src["url"]
+            try:
+                listing = self.yt.listing(src["url"])
+            except YouTubeError as e:
+                errors.append(f"{label}: {e.message}")
+                listing = None
+            if listing is not None:
+                with self._lock:                                       # one quick load-merge-save, so a download can't interleave
+                    cf = ChannelFile.load(folder)
+                    before = {i["id"] for i in cf.items}
+                    try:
+                        cf.merge(src["url"], listing, select=set())
+                    except YouTubeError as e:
+                        errors.append(f"{label}: {e.message}")
+                    else:
+                        fresh = [i for i in cf.items if i["id"] not in before]
+                        for i in fresh:
+                            i["new"] = True
+                        if fresh:
+                            found[folder.name] = found.get(folder.name, 0) + len(fresh)
+                            cf.save()
+                            log.info("%d new video(s) in %s from %s", len(fresh), folder.name, label)
+            with self._lock:
+                self._refresh.update(done=self._refresh["done"] + 1, found=dict(found), errors=list(errors))
+            self.on_change()
+        with self._lock:
+            self._refresh.update(running=False, found=dict(found), errors=list(errors), finished_at=time.time())
+        self.on_change()
+        return {"found": found, "errors": errors}
+
+    def start_refresh(self, channel: Optional[str] = None) -> dict:
+        if not self.yt.available():
+            raise YouTubeError("yt-dlp isn't installed on this TV.", 501)
+        if channel:
+            self._folder(channel)                                      # complain now, not in the thread, if it is not a channel
+        with self._lock:
+            if self._refresh["running"]:
+                return dict(self._refresh)
+            self._refresh["running"] = True                            # claimed: a second call sees it running
+        self._refresh_cancel.clear()
+
+        def work():
+            try:
+                self.refresh_sources(channel)
+            except Exception:
+                log.exception("checking playlists for new videos failed")
+                with self._lock:
+                    self._refresh.update(running=False, errors=self._refresh["errors"] + ["Couldn't check the playlists."],
+                                         finished_at=time.time())
+
+        threading.Thread(target=work, daemon=True).start()
+        with self._lock:
+            return dict(self._refresh)
+
+    def mark_seen(self, channel: str) -> int:
+        """'Not interested': drop the 'new' marks on a channel (the videos stay in it, unticked)."""
+        folder = self._folder(channel)
+        with self._lock:
+            cf = ChannelFile.load(folder)
+            n = 0
+            for i in cf.items:
+                if i.pop("new", None):
+                    n += 1
+            if n:
+                cf.save()
+        self.on_change()
+        return n
+
     def set_selection(self, channel: str, selected: List[str]) -> dict:
         """Tick/untick videos. Unticking one that was downloaded removes the file from the TV."""
         cf = self._channel(channel)
@@ -619,6 +703,8 @@ class YouTubeManager:
                 item["file"] = None
             if on and not item.get("selected"):
                 item["error"] = None
+            if on:
+                item.pop("new", None)                     # you picked it: it is not 'new' any more
             item["selected"] = on
         cf.save()
         with self._lock:
@@ -743,7 +829,7 @@ class YouTubeManager:
         with self._lock:
             return {"active": dict(self.current) if self.current else None, "queued": len(self._queue),
                     "finished": self.finished, "failed": list(self.failed[-20:]),
-                    "working": bool(self.current or self._queue)}
+                    "working": bool(self.current or self._queue), "refresh": dict(self._refresh)}
 
     def busy(self) -> bool:
         with self._lock:
@@ -751,6 +837,7 @@ class YouTubeManager:
 
     def shutdown(self) -> None:
         """Called when the phone page closes: stop downloading (what was queued stays on the channel's list)."""
+        self._refresh_cancel.set()
         self.cancel()
         w = self._worker
         if w and w.is_alive():
