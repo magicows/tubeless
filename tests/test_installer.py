@@ -41,7 +41,6 @@ dtoverlay=waveshare-touch-28dpi
 dtoverlay=vc4-kms-dpi-2inch8
 dtparam=audio=on
 dtoverlay=audremap,enable_jack,pins_18_19
-dtoverlay=sdio,sdio_overclock=25
 """
 
 TRIXIE_CMDLINE = ("console=serial0,115200 console=tty1 root=PARTUUID=ff65591c-02 rootfstype=ext4 fsck.repair=yes rootwait "
@@ -58,7 +57,7 @@ def test_config_adds_what_is_missing_in_the_all_section_and_keeps_everything_els
         assert line in out.splitlines()                          # nothing of the original was lost
     block = out.split(installer.BEGIN)[1].split(installer.END)[0].split()
     assert "dtoverlay=vc4-kms-dpi-2inch8" in block and "dtoverlay=audremap,enable_jack,pins_18_19" in block
-    assert "dtoverlay=sdio,sdio_overclock=25" in block                                    # the Wi-Fi chip's bus at half speed
+    assert not any("sdio" in line for line in block)                                      # that overlay takes the display's GPIOs
     assert "dtoverlay=vc4-kms-v3d" not in block and "dtparam=audio=on" not in block      # already there: not repeated
     assert out.index(installer.BEGIN) > out.rindex("[all]")
 
@@ -120,3 +119,13 @@ def test_cli_dry_run_changes_nothing_and_apply_backs_up_once(tmp_path, capsys):
     assert (boot / "config.txt").read_text() == changed
     assert (boot / "config.txt.before-tubeless").read_text() == TRIXIE_CONFIG                    # the original backup survives
     assert "already have everything" in capsys.readouterr().out
+
+
+def test_the_sdio_overlay_is_never_written_and_is_removed_from_a_block_that_has_it():
+    """`dtoverlay=sdio` claims GPIOs 22-27, which carry this display's picture: a TV with it in config.txt does not start."""
+    assert not any("sdio" in line for line in installer.CONFIG_LINES)
+    once = installer.apply_config_txt(TRIXIE_CONFIG)
+    broken = once.replace(installer.END, "dtoverlay=sdio,sdio_overclock=25\n" + installer.END)           # what an earlier version wrote
+    assert "dtoverlay=sdio" in broken
+    fixed = installer.apply_config_txt(broken)
+    assert "sdio" not in fixed and fixed == once                                          # re-running the installer repairs it

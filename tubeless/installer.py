@@ -46,9 +46,11 @@ END = "# <<< tubeless <<<"
 
 # Waveshare's recommended set for this display (their wiki lists all five for Bullseye and Bookworm), plus the
 # audio overlay that moves the PWM speaker to GPIO 18/19. `dtoverlay=vc4-kms-v3d` and `dtparam=audio=on` are
-# Pi OS defaults and are added only if missing. `sdio,sdio_overclock=25` runs the Wi-Fi chip's bus at half speed (25 MHz, not
-# 50): under the steady load of streaming video the chip's bus timed out and its firmware crashed, taking the network
-# down until the next restart. Wi-Fi this slow is still far faster than any video needs.
+# Pi OS defaults and are added only if missing.
+#
+# NOT here, on purpose: `dtoverlay=sdio,...`. It looks like a way to slow the on-board Wi-Fi bus, but it "enables SDIO via GPIOs
+# 22-27" for an external device, and those pins carry this display's picture data: the TV does not start. (It was added once and
+# did exactly that.) Anything in this list must be checked against the overlay's own documentation first.
 CONFIG_LINES = [
     "dtoverlay=vc4-kms-v3d",
     "dtoverlay=waveshare-28dpi-3b-4b",
@@ -58,7 +60,6 @@ CONFIG_LINES = [
     "dtoverlay=vc4-kms-dpi-2inch8",
     "dtparam=audio=on",
     "dtoverlay=audremap,enable_jack,pins_18_19",
-    "dtoverlay=sdio,sdio_overclock=25",
 ]
 
 # Kernel command line: rotate the panel to landscape, keep the screen awake, hide the logo and the blinking cursor,
