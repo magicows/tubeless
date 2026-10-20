@@ -100,6 +100,12 @@
         <h2 style="margin-top:20px">In this channel</h2>
         <label class="check"><input type="checkbox" id="ytoffline" checked> <span>Download to the TV <small>so it plays with no Wi-Fi</small></span></label>
         <p class="sub hide" id="streamnote">Not downloading: the TV will play these straight from YouTube, which needs Wi-Fi and takes about 10 seconds to start each video. If one can't be played, the TV says so and moves on.</p>
+        <label for="ytorder" style="margin-top:10px">Play order</label>
+        <select id="ytorder">
+          <option value="default">Follow the TV's Shuffle setting</option>
+          <option value="shuffle">Shuffled (a random order, no repeats until you've seen them all)</option>
+          <option value="order">In order (the playlist's own order)</option>
+        </select>
         <div id="newbanner" class="hide" style="margin:8px 0">
           <p class="sub" id="newtext" style="margin:0 0 6px"></p>
           <div class="toolbar"><button class="ghost" id="ticknew">Tick all the new ones</button><button class="ghost" id="markseen">Not interested</button></div>
@@ -563,6 +569,8 @@ function renderYt() {
     box.append(row);
     if (i.status === 'done') done++; else if (i.status === 'waiting') waiting++; else if (i.status === 'error') errors++;
   }
+  const chan = state.channels.find(x => x.name === ytChannel);
+  if (chan && document.activeElement !== $('ytorder')) $('ytorder').value = chan.order || 'default';
   const newCount = items.filter(i => i.new).length;
   $('newbanner').classList.toggle('hide', !newCount);
   $('newtext').textContent = newCount + ' new video' + (newCount === 1 ? '' : 's') + ' in your playlists. They are unticked: tick the ones you want, then save and download.';
@@ -577,6 +585,11 @@ function renderYt() {
   $('ytnotice').textContent = state.youtube.available ? '' : 'yt-dlp is not installed on this TV, so videos cannot be downloaded. See the README.';
   $('ytsave').disabled = !dirty;
 }
+
+$('ytorder').onchange = async () => {
+  try { await api('/api/channel/order', {method: 'POST', body: JSON.stringify({channel: ytChannel, order: $('ytorder').value})}); say($('ytsavemsg'), 'Saved. It applies when the TV goes back to playing.', 'ok'); await load(); }
+  catch (e) { say($('ytsavemsg'), e.message, 'bad'); }
+};
 
 $('ytoffline').onchange = async () => {
   const mode = $('ytoffline').checked ? 'download' : 'stream';

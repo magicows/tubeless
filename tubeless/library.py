@@ -79,6 +79,18 @@ class Library:
         return [STREAM_PREFIX + i["id"] for i in cf.items
                 if i.get("selected") and not (i.get("file") and i["file"] in have)]
 
+    def in_order(self, channel: Channel, rels: List[str]) -> List[str]:
+        """The videos 'in order': a YouTube channel plays in its playlist's order; a folder plays by file name."""
+        if not ChannelFile.exists(Path(channel.path)):
+            return sorted(rels)
+        cf = ChannelFile.load(Path(channel.path))
+        position = {}
+        for n, item in enumerate(cf.items):
+            if item.get("file"):
+                position[item["file"]] = n
+            position[STREAM_PREFIX + item["id"]] = n
+        return sorted(rels, key=lambda r: (position.get(r, 10 ** 9), r))
+
     def has_videos(self, channel: Channel) -> bool:
         for _, dirnames, files in os.walk(channel.path):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -183,7 +195,7 @@ class Playlists:
         cycle = int(saved.get("cycle", 0))
         if not saved_order or saved.get("shuffle") != shuffle:
             # nothing saved yet, or shuffle was switched: start a fresh order (keeping the current episode first)
-            order = self._shuffled(on_disk, first=current) if shuffle else list(on_disk)
+            order = self._shuffled(on_disk, first=current) if shuffle else self.library.in_order(channel, on_disk)
         elif shuffle:
             order = saved_order
             idx = order.index(current) if current in order else 0
@@ -193,7 +205,7 @@ class Playlists:
                 pos = self.rng.randint(idx + 1, len(order))
                 order.insert(pos, p)
         else:
-            order = list(on_disk)                          # sorted order simply tracks the disk
+            order = self.library.in_order(channel, on_disk)          # in order simply tracks the disk
         index = order.index(current) if current in order else 0
         plan = Plan(channel, order, index, cycle, shuffle)
         self._save(plan)
@@ -206,7 +218,7 @@ class Playlists:
             raise ValueError(f"No videos found in {channel.path}.")
         last = self.progress(channel).get("current")
         saved = self.store.load(self._file(channel), None) or {}
-        order = self._shuffled(on_disk, avoid_first=last) if shuffle else list(on_disk)
+        order = self._shuffled(on_disk, avoid_first=last) if shuffle else self.library.in_order(channel, on_disk)
         plan = Plan(channel, order, 0, int(saved.get("cycle", 0)) + 1, shuffle)
         self._save(plan)
         self.set_progress(channel, order[0], 0.0)

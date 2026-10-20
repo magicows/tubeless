@@ -521,3 +521,54 @@ def test_the_update_card_does_not_freeze_the_screen_if_the_restart_never_comes(r
     rig.app._announce_update("update", "9.9.9")
     assert rig.app._updating is True
     assert wait_for(lambda: rig.app._updating is False, timeout=2)
+
+
+def test_stopping_the_player_for_upload_mode_never_shows_what_was_on_screen_before(rig):
+    import numpy as np
+    stale = np.full((HW.view_h, HW.view_w), 0xF800, dtype=np.uint16)          # the 'update installed' card, say, still on the display
+    rig.display.show(stale)
+    frames = []
+    real_show = rig.display.show
+    rig.display.show = lambda px: (frames.append(np.array(px, copy=True)), real_show(px))[1]
+    rig.app.start_transfer()
+    assert wait_for(lambda: rig.state["mode"] == "transfer")
+    assert len(frames) >= 2                                                    # a 'starting' card first, then the upload screen
+    assert not (frames[0] == stale).all() and not (frames[0] == frames[-1]).all()
+
+
+def test_a_channel_can_play_in_order_or_shuffled_whatever_the_tv_setting_says(tmp_path):
+    r = Rig(tmp_path)
+    try:
+        app = r.app
+        assert app.shuffle is True and app.shuffle_for(app.current_channel()) is True
+        app.set_channel_order("1.cartoons", "order")
+        assert app.shuffle_for(app.current_channel()) is False and app.shuffle is True              # this channel only
+        assert app.web_state()["channels"][0]["order"] == "order"
+        app.start_playback()
+        assert app.plan.order == sorted(app.plan.order) and app.plan.shuffle is False                # c0 c1 c2 c3 c4
+        app.set_channel_order("1.cartoons", "default")
+        assert app.shuffle_for(app.current_channel()) is True and app.web_state()["channels"][0]["order"] is None
+        with pytest.raises(ValueError):
+            app.set_channel_order("9.nope", "order")
+        with pytest.raises(ValueError):
+            app.set_channel_order("1.cartoons", "sideways")
+        app.set_channel_order("2.nights", "shuffle")
+    finally:
+        r.stop()
+    again = Rig(tmp_path, start=False)
+    assert again.app.channel_order == {"2.nights": "shuffle"}                                       # kept across a restart
+
+
+def test_the_menu_shuffle_toggle_speaks_for_the_channel_you_are_on(tmp_path):
+    r = Rig(tmp_path)
+    try:
+        r.app.set_channel_order("1.cartoons", "order")
+        r.open_menu()
+        r.app.menu.open_page("settings")
+        items = r.app.menu.items(r.app._menu_ctx())
+        r.app.menu.index = next(i for i, it in enumerate(items) if it.action == ("shuffle",))
+        assert items[r.app.menu.index].value == "OFF"                                              # it shows what this channel does
+        r.app.menu_select()
+        assert r.app.shuffle is True and "1.cartoons" not in r.app.channel_order                    # now on, and no override left
+    finally:
+        r.stop()

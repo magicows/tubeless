@@ -115,3 +115,28 @@ def test_episode_at(lib, playlists):
 def test_no_videos_raises(lib, playlists):
     with pytest.raises(ValueError):
         playlists.plan(lib.channels()[2], True)
+
+
+
+def test_a_youtube_channel_in_order_follows_its_playlist_not_its_file_names(tmp_path):
+    import random
+    from tubeless.library import Library, Playlists
+    from tubeless.state import Store
+    from tubeless.youtube import ChannelFile
+    root = tmp_path / "videos"
+    folder = root / "3.yt"
+    folder.mkdir(parents=True)
+    for name in ("Zebra [bbbbbbbbbbb].mp4", "Apple [aaaaaaaaaaa].mp4", "Mango [ccccccccccc].mp4"):
+        (folder / name).write_bytes(b"")
+    cf = ChannelFile(folder)
+    cf.items = [{"id": "bbbbbbbbbbb", "title": "Zebra", "selected": True, "file": "Zebra [bbbbbbbbbbb].mp4", "error": None},
+                {"id": "aaaaaaaaaaa", "title": "Apple", "selected": True, "file": "Apple [aaaaaaaaaaa].mp4", "error": None},
+                {"id": "ccccccccccc", "title": "Mango", "selected": True, "file": "Mango [ccccccccccc].mp4", "error": None}]
+    cf.save()
+    lib = Library(root)
+    channel = lib.channels()[0]
+    plans = Playlists(lib, Store(tmp_path / "data"), "/static.mp4", rng=random.Random(1))
+    assert [p.split(" [")[0] for p in plans.plan(channel, False).order] == ["Zebra", "Apple", "Mango"]       # the playlist's order
+    assert sorted(lib.videos(channel))[0].startswith("Apple")                                                  # file names would say otherwise
+    shuffled = plans.plan(channel, True)
+    assert sorted(shuffled.order) == sorted(lib.videos(channel))

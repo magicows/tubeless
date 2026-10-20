@@ -232,6 +232,7 @@ class WebServer:
         set_standby(data: bytes) -> None      raises ValueError("why not")
         reset_standby() -> None               back to the picture that ships with Tubeless
         set_setting(key, value) -> None       raises ValueError("why not")
+        set_channel_order(channel, order)     'shuffle' | 'order' | 'default'; raises ValueError("why not")
         status() -> dict                      uptime, temperature, memory ...
         logs(lines: int) -> str               the end of the app's log
         rescan(force: bool) -> dict           read video durations in the background; returns the scan status
@@ -408,6 +409,17 @@ class WebServer:
                     try:
                         for key, value in data.items():
                             server.hooks.set_setting(str(key), value)
+                    except ValueError as e:
+                        return self._fail(400, str(e))
+                    self._json(200, {"ok": True})
+                elif route == "/api/channel/order":
+                    if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    try:
+                        server.hooks.set_channel_order(str(data.get("channel", "")), str(data.get("order", "")))
                     except ValueError as e:
                         return self._fail(400, str(e))
                     self._json(200, {"ok": True})

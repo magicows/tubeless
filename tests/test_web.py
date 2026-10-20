@@ -191,6 +191,11 @@ class Hooks:
             raise ValueError("That isn't a setting you can change here.")
         self.settings = {key: value}
 
+    def set_channel_order(self, channel, order):
+        if channel != "1.shows":
+            raise ValueError("No such channel.")
+        self.order = (channel, order)
+
     def status(self):
         return {"python": "3.13.0", "uptime_s": 5}
 
@@ -387,3 +392,12 @@ def test_post_routes_leave_the_connection_usable_for_the_next_request(server):
         assert r.status == 200, (path, r.status)
         r.read()
     conn.close()
+
+
+def test_channel_play_order_over_http(server):
+    assert call(server, "POST", "/api/channel/order", {"channel": "1.shows", "order": "order"})[0] == 401
+    token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
+    assert call(server, "POST", "/api/channel/order", {"channel": "1.shows", "order": "shuffle"}, token=token)[0] == 200
+    assert server.hooks.order == ("1.shows", "shuffle")
+    code, body = call(server, "POST", "/api/channel/order", {"channel": "9.nope", "order": "order"}, token=token)[:2]
+    assert code == 400 and "No such channel" in body["error"]

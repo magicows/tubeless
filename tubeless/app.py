@@ -75,6 +75,8 @@ class App:
 
         # remembered settings
         self.shuffle = bool(self.settings.get("shuffle", True))
+        order = self.settings.get("channel_order", {})
+        self.channel_order = {k: v for k, v in (order if isinstance(order, dict) else {}).items() if v in ("shuffle", "order")}
         b = self.settings.get("brightness", 100)
         self.brightness = b if b in hw.brightness_levels else hw.brightness_levels[-1]
         self.auto_dim_min = int(self.settings.get("auto_dim_min", 0))
@@ -254,9 +256,14 @@ class App:
     # ─────────────────────────────────────────
     #  Playback
     # ─────────────────────────────────────────
+    def shuffle_for(self, channel) -> bool:
+        """Does this channel play shuffled? A channel can be set to 'shuffle' or 'order' on the web page; otherwise the TV's Shuffle setting."""
+        mode = self.channel_order.get(getattr(channel, "name", channel))
+        return self.shuffle if mode is None else mode == "shuffle"
+
     def start_playback(self) -> None:
         """(Re)build the current channel's playlist and start the player on it."""
-        plan = self.playlists.plan(self.current_channel(), self.shuffle)
+        plan = self.playlists.plan(self.current_channel(), self.shuffle_for(self.current_channel()))
         self.plan = plan
         self._cur_rel = None
         path = self.playlists.write_m3u(plan, self.m3u_path)
@@ -274,13 +281,22 @@ class App:
     def reload_channel(self) -> None:
         """Rebuild the current channel's playlist and load it into the running player."""
         self.save_progress_now()
-        plan = self.playlists.plan(self.current_channel(), self.shuffle)
+        plan = self.playlists.plan(self.current_channel(), self.shuffle_for(self.current_channel()))
         self.plan = plan
         self._cur_rel = None
         path = self.playlists.write_m3u(plan, self.m3u_path)
         self.cmd("loadfile", path, "replace")
         self.cmd("set_property", "pause", False)
         self._set_resume(plan)
+
+    def _show_busy(self, title: str, lines) -> None:
+        """A message straight onto the display, for the moment between mpv stopping and the next screen being ready."""
+        if self.display is None or self._updating:
+            return
+        try:
+            self.display.show(image_to_565(render.render_message(self.hw, title, lines, self.name)))
+        except Exception as e:
+            log.warning("could not draw %r: %s", title, e)
 
     def _announce_update(self, kind: str, version: str) -> None:
         """The card on the TV just before it restarts into the new (or previous) version."""
@@ -341,7 +357,7 @@ class App:
 
     def finish_cycle(self) -> None:
         """You have been through everything: reshuffle and start a new cycle."""
-        plan = self.playlists.new_cycle(self.current_channel(), self.shuffle)
+        plan = self.playlists.new_cycle(self.current_channel(), self.shuffle_for(self.current_channel()))
         self.plan = plan
         self._cur_rel = None
         self._pending_resume = None
@@ -396,7 +412,7 @@ class App:
         channel = channels[target]
         self.settings.set(channel=channel.name)
         log.info("switching to channel %s", channel.name)
-        plan = self.playlists.plan(channel, self.shuffle)
+        plan = self.playlists.plan(channel, self.shuffle_for(channel))
         self.plan = plan
         self._cur_rel = None
         self._pending_resume = None
@@ -494,8 +510,9 @@ class App:
 
     def _menu_ctx(self) -> MenuContext:
         channels = self.channels()
+        shuffling = self.shuffle_for(channels[self.channel_index]) if 0 <= self.channel_index < len(channels) else self.shuffle
         return MenuContext(
-            paused=bool(self.player.get("pause")), brightness=self.brightness, shuffle=self.shuffle,
+            paused=bool(self.player.get("pause")), brightness=self.brightness, shuffle=shuffling,
             channels=[c.label for c in channels], current_channel=self.channel_index,
             sleep_timer_min=self.sleep_timer_min, auto_dim_min=self.auto_dim_min,
             confirm_shutdown=time.time() < self.confirm_shutdown_until, wifi_setup=self.wifi_available)
@@ -535,13 +552,16 @@ class App:
             self.schedule_menu_hide()
             self.render_menu()
         elif kind == "shuffle":
-            self.shuffle = not self.shuffle
+            now = self.shuffle_for(self.current_channel())                  # what this channel is doing, whoever decided it
+            self.shuffle = not now
+            if self.channel_order.pop(self.current_channel().name, None) is not None:
+                self.settings.set(channel_order=dict(self.channel_order))   # the toggle speaks for the channel you are on
             self.settings.set(shuffle=self.shuffle)
             self.reload_channel()
             self.schedule_menu_hide()
             self.render_menu()
         elif kind == "reshuffle":
-            if self.shuffle:
+            if self.shuffle_for(self.current_channel()):
                 self.finish_cycle_in_place()
             self.schedule_menu_hide()
             self.render_menu()
@@ -1000,6 +1020,7 @@ class App:
             self.player.stop()
         except Exception:
             pass
+        self._show_busy("UPLOAD MODE", ["Starting the upload page..."])      # stopping mpv uncovers whatever was drawn last
         self.uploads = UploadManager(self.library.root)
         session = Session()
         self.youtube = YouTubeManager(self.library.root, self._ytdlp or YtDlp(find_ytdlp(self.cfg.ytdlp_path)),
@@ -1318,7 +1339,7 @@ class App:
         channels = []
         for c in self.library.channels():
             channels.append({"name": c.name, "label": c.label, "count": len(self.library.videos(c)),
-                             "library": self.index.summary(c)})
+                             "library": self.index.summary(c), "order": self.channel_order.get(c.name)})
         return {"name": self.name, "channels": channels, "standby_custom": self.cfg.standby_custom.is_file(),
                 "scan": self.index.status(), "settings": self.web_settings()}
 
@@ -1328,6 +1349,19 @@ class App:
                            "sleep_timer_min": self.sleep_timer_min},
                 "options": {"brightness": list(self.hw.brightness_levels), "auto_dim_min": list(AUTO_DIM_STEPS),
                             "sleep_timer_min": list(SLEEP_TIMER_STEPS)}}
+
+    def set_channel_order(self, channel: str, order: str) -> None:
+        """'shuffle', 'order', or 'default' (follow the TV's Shuffle setting) for one channel, from the web page."""
+        if channel not in [c.name for c in self.library.channels()]:
+            raise ValueError("No such channel.")
+        if order not in ("default", "shuffle", "order"):
+            raise ValueError("Play order is 'shuffle', 'order' or 'default'.")
+        if order == "default":
+            self.channel_order.pop(channel, None)
+        else:
+            self.channel_order[channel] = order
+        self.settings.set(channel_order=dict(self.channel_order))
+        log.info("channel %s plays %s", channel, {"default": "as the TV's Shuffle setting says", "shuffle": "shuffled", "order": "in order"}[order])
 
     def set_web_setting(self, key: str, value) -> None:
         """Change one of the settings the menu has, from the web page (the TV is in upload mode then, so the player is stopped)."""
@@ -1448,6 +1482,9 @@ class _WebHooks:
 
     def set_setting(self, key: str, value) -> None:
         self.app.set_web_setting(key, value)
+
+    def set_channel_order(self, channel: str, order: str) -> None:
+        self.app.set_channel_order(channel, order)
 
     def status(self) -> dict:
         return self.app.system_status()
