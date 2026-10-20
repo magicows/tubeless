@@ -31,6 +31,7 @@ from .menu import AUTO_DIM_STEPS, SLEEP_TIMER_STEPS, MenuContext, MenuModel, nex
 from .pixels import image_to_565
 from .skip import skip_target
 from .state import Settings, Store
+from .statics import StaticManager
 from . import __version__
 from .updater import UpdateError, Updater
 from .setupweb import SetupServer
@@ -64,6 +65,8 @@ class App:
         self.settings = Settings(self.store, expand(cfg.legacy_state_file))
         self.library = library or Library(cfg.videos)
         self.playlists = Playlists(self.library, self.store, cfg.short_static, rng=rng)
+        self.statics = StaticManager(cfg, self.settings, self.library.root, on_change=self._static_changed)
+        self.playlists.static_path = self.statics.paths()[0]
         self.rec = GestureRecognizer(cfg.long_press, cfg.touch_move_px, cfg.swipe_min_px)
         self.name = cfg.name
         self.tick_every = tick_every
@@ -258,6 +261,10 @@ class App:
     # ─────────────────────────────────────────
     #  Playback
     # ─────────────────────────────────────────
+    def _static_changed(self) -> None:
+        """A different TV static clip was chosen on the web page: the next playlist uses it (the player restarts on leaving upload mode)."""
+        self.playlists.static_path = self.statics.paths()[0]
+
     def shuffle_for(self, channel) -> bool:
         """Does this channel play shuffled? A channel can be set to 'shuffle' or 'order' on the web page; otherwise the TV's Shuffle setting."""
         mode = self.channel_order.get(getattr(channel, "name", channel))
@@ -419,12 +426,12 @@ class App:
         self._cur_rel = None
         self._pending_resume = None
         self.playlists.write_m3u(plan, self.m3u_path)
-        self.cmd("loadfile", self.cfg.long_static, "replace")
+        self.cmd("loadfile", self.statics.paths()[1], "replace")
         self.cmd("set_property", "pause", False)
         # A newer channel change replaces any pending one, so rapid swipes don't pile up.
         if self._switch_timer is not None:
             self._switch_timer.cancel()
-        self._switch_timer = threading.Timer(self.switch_delay, self._finish_switch, args=(plan,))
+        self._switch_timer = threading.Timer(self.statics.delay(self.switch_delay), self._finish_switch, args=(plan,))
         self._switch_timer.daemon = True
         self._switch_timer.start()
 
@@ -1365,7 +1372,7 @@ class App:
             channels.append({"name": c.name, "label": c.label, "count": len(self.library.videos(c)),
                              "library": self.index.summary(c), "order": self.channel_order.get(c.name)})
         return {"name": self.name, "channels": channels, "standby_custom": self.cfg.standby_custom.is_file(),
-                "scan": self.index.status(), "settings": self.web_settings()}
+                "scan": self.index.status(), "settings": self.web_settings(), "static": self.statics.state()}
 
     # --- settings, status and logs for the web page ------------------------------------------------------------
     def web_settings(self) -> dict:
@@ -1509,6 +1516,11 @@ class _WebHooks:
 
     def set_channel_order(self, channel: str, order: str) -> None:
         self.app.set_channel_order(channel, order)
+
+    # the TV static (see statics.py)
+    @property
+    def statics(self):
+        return self.app.statics
 
     def status(self) -> dict:
         return self.app.system_status()

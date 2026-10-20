@@ -157,6 +157,36 @@
         <pre id="logbox" class="hide" style="white-space:pre-wrap;font-size:11px;max-height:260px;overflow:auto;margin-top:8px"></pre>
       </section>
       <section class="card">
+        <h2>TV static</h2>
+        <p class="sub">The clip that plays before every video, and when you change channel.</p>
+        <p class="sub" id="staticNow" style="margin:6px 0"></p>
+        <div id="staticPresets"></div>
+        <h2 style="margin-top:16px">Your own clip</h2>
+        <div class="row"><button class="ghost" id="staticUp">Upload a clip</button><button class="ghost" id="staticPick">Pick from the TV's home folder</button></div>
+        <input id="staticFile" type="file" accept="video/*,.mkv,.gif" class="hide">
+        <input id="staticSoundFile" type="file" accept="audio/*,.mp3,.wav,.ogg,.opus,.m4a,.aac,.flac" class="hide">
+        <div class="listbox hide" id="staticPicker" style="margin-top:8px"></div>
+        <div id="staticOwn" class="hide" style="margin-top:10px">
+          <p class="sub" id="staticOwnName" style="font-weight:600;margin:0 0 6px"></p>
+          <label for="staticSound">Its sound</label>
+          <select id="staticSound">
+            <option value="own">Keep its own sound</option>
+            <option value="static">Use the TV static sound</option>
+            <option value="silent">No sound</option>
+            <option value="file">A sound file I upload</option>
+          </select>
+          <div id="staticSoundPick" class="hide" style="margin-top:8px">
+            <select id="staticSoundName" aria-label="Sound file"></select>
+            <button class="ghost" id="staticSoundUp" style="margin-top:6px">Upload a sound</button>
+          </div>
+          <p class="sub" id="staticFfmpegNote" style="margin:8px 0 0"></p>
+          <button id="staticUse" style="margin-top:10px">Use this clip</button>
+        </div>
+        <p class="msg" id="staticMsg"></p>
+        <video id="staticPreview" controls playsinline muted style="width:100%;max-height:200px;border-radius:8px;margin-top:8px;background:#000"></video>
+        <div id="staticUploads" class="sub" style="margin-top:8px"></div>
+      </section>
+      <section class="card">
         <h2>Standby picture</h2>
         <p class="sub">Shown for a few seconds when the TV restarts its player, for example after it has played every episode.</p>
         <img id="standbyImg" alt="Standby picture" style="width:100%;border-radius:8px;margin:8px 0">
@@ -229,6 +259,7 @@ async function load() {
   $('about').textContent = 'Tubeless ' + state.version + (state.youtube && state.youtube.available ? '  -  yt-dlp ' + (state.youtube.version || '') : '  -  YouTube channels need yt-dlp, which is not installed on this TV');
   renderChannels();
   renderSettings();
+  renderStatic();
   loadStatus();
   if (!ytdlpTimer) loadYtdlp();
   if (!refreshTimer) loadRefresh();
@@ -301,6 +332,84 @@ $('logBtn').onclick = async () => {
     if (!res.ok) throw new Error('Error ' + res.status);
     const box = $('logbox'); box.textContent = (await res.text()) || '(the log is empty)'; box.classList.remove('hide'); box.scrollTop = box.scrollHeight;
   } catch (e) { say($('setmsg'), e.message, 'bad'); }
+};
+
+let staticPending = null;
+const fmtMB = n => (n / 1048576).toFixed(1) + ' MB';
+function renderStatic() {
+  const st = state.static; if (!st) return;
+  $('staticNow').textContent = 'Now: ' + st.choice.label + (st.choice.missing ? '  (the clip you chose has gone, so the default is used)' : '');
+  const box = $('staticPresets'); box.textContent = '';
+  for (const p of st.presets) {
+    const lab = el('label', 'check'), r = document.createElement('input'); r.type = 'radio'; r.name = 'staticPreset'; r.value = p.name;
+    r.checked = st.choice.kind === 'preset' && st.choice.name === p.name;
+    r.onchange = async () => { try { await api('/api/static/preset', {method: 'POST', body: JSON.stringify({name: p.name})}); say($('staticMsg'), 'Saved. It plays when the TV goes back to playing.', 'ok'); await load(); } catch (e) { say($('staticMsg'), e.message, 'bad'); } };
+    lab.append(r, el('span', '', p.label)); box.append(lab);
+  }
+  $('staticFfmpegNote').textContent = st.ffmpeg ? '' : 'Changing a clip\'s sound needs ffmpeg, which this TV does not have (YouTube support installs it). You can still use the clip with its own sound.';
+  for (const o of $('staticSound').options) if (o.value !== 'own') o.disabled = !st.ffmpeg;
+  const names = st.uploads.sounds, cur = $('staticSoundName').value;
+  $('staticSoundName').innerHTML = ''; for (const n of names) $('staticSoundName').add(new Option(n, n)); if (names.includes(cur)) $('staticSoundName').value = cur;
+  const up = $('staticUploads'); up.textContent = '';
+  if (st.uploads.clips.length) {
+    up.append(el('div', '', 'Clips on the TV (tap one to use it again):'));
+    for (const n of st.uploads.clips) {
+      const row = el('div', 'item'), t = el('div', 't', n), del = el('button', 'ghost', 'Delete'); del.style.flex = '0 0 auto';
+      t.style.cursor = 'pointer'; t.onclick = () => chooseOwn('upload', n);
+      del.onclick = async () => { if (confirm('Delete ' + n + ' from the TV?')) { try { await api('/api/static/delete', {method: 'POST', body: JSON.stringify({kind: 'clip', name: n})}); await load(); } catch (e) { say($('staticMsg'), e.message, 'bad'); } } };
+      row.append(t, del); up.append(row);
+    }
+  }
+  if (staticShown !== st.choice.label) { staticShown = st.choice.label; loadStaticPreview(); }      // not on every refresh: it would restart the preview
+}
+let staticShown = null;
+async function loadStaticPreview() {
+  try {
+    const res = await fetch('/api/static/file', {headers: {'X-Token': token}});
+    if (res.ok) { const v = $('staticPreview'), old = v.src; v.src = URL.createObjectURL(await res.blob()); if (old && old.startsWith('blob:')) URL.revokeObjectURL(old); }
+  } catch (e) {}
+}
+function chooseOwn(kind, ref) {
+  staticPending = {kind, ref}; $('staticOwn').classList.remove('hide'); $('staticOwnName').textContent = ref;
+  $('staticSound').value = 'own'; $('staticSoundPick').classList.add('hide'); $('staticPicker').classList.add('hide');
+  $('staticOwn').scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+async function putFile(kind, file) {
+  const res = await fetch('/api/static/upload?kind=' + kind + '&name=' + enc(file.name), {method: 'PUT', headers: {'X-Token': token}, body: file});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('Error ' + res.status));
+  return data;
+}
+$('staticUp').onclick = () => $('staticFile').click();
+$('staticFile').onchange = async () => {
+  const f = $('staticFile').files[0]; if (!f) return; say($('staticMsg'), 'Sending ' + f.name + ' (' + fmtMB(f.size) + ')...', '');
+  try { const r = await putFile('clip', f); say($('staticMsg'), '', ''); await load(); chooseOwn('upload', r.name); } catch (e) { say($('staticMsg'), e.message, 'bad'); }
+  $('staticFile').value = '';
+};
+$('staticPick').onclick = async () => {
+  const box = $('staticPicker'); box.classList.remove('hide'); box.textContent = 'Looking...';
+  try {
+    const r = await api('/api/static/home?kind=clip'); box.textContent = '';
+    if (!r.files.length) box.append(el('p', 'sub', 'No video clips in the TV\'s home folder. (The videos folder is not listed.)'));
+    for (const f of r.files) { const row = el('div', 'item'), t = el('div', 't', f.path); t.append(el('div', 'm', fmtMB(f.size))); row.append(t); row.onclick = () => chooseOwn('home', f.path); box.append(row); }
+  } catch (e) { box.textContent = e.message; }
+};
+$('staticSound').onchange = () => $('staticSoundPick').classList.toggle('hide', $('staticSound').value !== 'file');
+$('staticSoundUp').onclick = () => $('staticSoundFile').click();
+$('staticSoundFile').onchange = async () => {
+  const f = $('staticSoundFile').files[0]; if (!f) return;
+  try { const r = await putFile('sound', f); await load(); $('staticSoundName').value = r.name; say($('staticMsg'), 'Sound uploaded.', 'ok'); } catch (e) { say($('staticMsg'), e.message, 'bad'); }
+  $('staticSoundFile').value = '';
+};
+$('staticUse').onclick = async () => {
+  if (!staticPending) return;
+  const sound = $('staticSound').value; $('staticUse').disabled = true;
+  say($('staticMsg'), sound === 'own' ? 'Saving...' : 'Converting the clip on the TV (a few seconds, up to a minute)...', '');
+  try {
+    await api('/api/static/use', {method: 'POST', body: JSON.stringify({kind: staticPending.kind, ref: staticPending.ref, sound, sound_name: $('staticSoundName').value})});
+    say($('staticMsg'), 'Saved. It plays when the TV goes back to playing.', 'ok'); $('staticOwn').classList.add('hide'); staticPending = null; await load();
+  } catch (e) { say($('staticMsg'), e.message, 'bad'); }
+  $('staticUse').disabled = false;
 };
 
 let refreshTimer = null;

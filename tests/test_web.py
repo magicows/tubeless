@@ -161,7 +161,16 @@ def test_generated_pins_are_four_digits():
 # ---- over HTTP, like a phone would -------------------------------------------------------------------------
 class Hooks:
     def __init__(self):
+        import tempfile
+        from tubeless.config import Config
+        from tubeless.state import Settings, Store
+        from tubeless.statics import StaticManager
         self.name, self.uploads = "Test TV", []
+        base = Path(tempfile.mkdtemp())
+        (base / "home" / "videos").mkdir(parents=True)
+        cfg = Config(data_dir=str(base / "data"), static_short="/s.mp4", static_long="/l.mp4")
+        self.statics = StaticManager(cfg, Settings(Store(cfg.data)), base / "home" / "videos", ffmpeg="", home=base / "home")
+        self.home = base / "home"
 
     def state(self):
         return {"name": self.name, "channels": [{"name": "1.shows", "label": "shows", "count": 2}]}
@@ -401,3 +410,53 @@ def test_channel_play_order_over_http(server):
     assert server.hooks.order == ("1.shows", "shuffle")
     code, body = call(server, "POST", "/api/channel/order", {"channel": "9.nope", "order": "order"}, token=token)[:2]
     assert code == 400 and "No such channel" in body["error"]
+
+
+def put_raw(srv, path, body, token=None):
+    req = urllib.request.Request(srv.base + path, data=body, method="PUT")
+    if token:
+        req.add_header("X-Token", token)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def test_static_routes_need_the_pin(server):
+    for method, path in (("GET", "/api/static/home?kind=clip"), ("GET", "/api/static/file"), ("POST", "/api/static/preset"),
+                         ("POST", "/api/static/use"), ("POST", "/api/static/delete")):
+        assert call(server, method, path, {} if method == "POST" else None)[0] == 401, path
+    assert put_raw(server, "/api/static/upload?kind=clip&name=x.mp4", b"abc")[0] == 401
+
+
+def test_choosing_uploading_and_using_a_static_clip_over_http(server):
+    token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
+    assert call(server, "POST", "/api/static/preset", {"name": "none"}, token=token)[1]["choice"]["name"] == "none"
+    code, body = call(server, "POST", "/api/static/preset", {"name": "loud"}, token=token)[:2]
+    assert code == 400 and "built-in" in body["error"]
+    code, up = put_raw(server, "/api/static/upload?kind=clip&name=My%20clip.mp4", b"v" * 64, token)
+    assert code == 200 and up["name"] == "My clip.mp4" and up["static"]["uploads"]["clips"] == ["My clip.mp4"]
+    code, state = call(server, "POST", "/api/static/use", {"kind": "upload", "ref": "My clip.mp4", "sound": "own"}, token=token)[:2]
+    assert code == 200 and state["choice"]["label"] == "My clip.mp4"
+    req = urllib.request.Request(server.base + "/api/static/file", headers={"X-Token": token})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        assert r.headers["Content-Type"] == "video/mp4" and r.read() == b"v" * 64          # the page can preview what is playing
+    code, body = call(server, "POST", "/api/static/use", {"kind": "upload", "ref": "My clip.mp4", "sound": "static"}, token=token)[:2]
+    assert code == 400 and "needs ffmpeg" in body["error"]
+    assert call(server, "POST", "/api/static/delete", {"kind": "clip", "name": "My clip.mp4"}, token=token)[1]["choice"]["name"] == "sound"
+    code, body = put_raw(server, "/api/static/upload?kind=clip&name=notes.txt", b"words", token)
+    assert code == 400 and "file type" in body["error"]
+
+
+def test_the_home_folder_picker_over_http(server):
+    token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
+    (server.hooks.home / "clips").mkdir()
+    (server.hooks.home / "clips" / "tv.mp4").write_bytes(b"v" * 10)
+    (server.hooks.home / "videos" / "ep.mp4").write_bytes(b"v" * 10)
+    code, body = call(server, "GET", "/api/static/home?kind=clip", token=token)
+    assert code == 200 and [f["path"] for f in body["files"]] == ["clips/tv.mp4"]               # not the videos library
+    assert call(server, "GET", "/api/static/home?kind=picture", token=token)[0] == 400
+    state = call(server, "POST", "/api/static/use", {"kind": "home", "ref": "clips/tv.mp4", "sound": "own"}, token=token)[1]
+    assert state["choice"]["kind"] == "home" and state["choice"]["label"] == "tv.mp4"
+    assert call(server, "POST", "/api/static/use", {"kind": "home", "ref": "videos/ep.mp4", "sound": "own"}, token=token)[0] == 400

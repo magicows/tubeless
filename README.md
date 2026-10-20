@@ -43,6 +43,11 @@ Only someone who can see the TV can get in. From there you can:
 * get advice on files that may not play well (resolution, codec, bitrate). Nothing is converted for you;
 * rename the TV;
 * change the "technical difficulties" picture shown when the player restarts;
+* choose the **TV static**: the built-in one (with sound, or silent), no static (just a quick blank), or your own clip, uploaded or
+  picked from the TV's home folder (never your videos folder). With ffmpeg (YouTube support installs it) the TV can also change a clip's
+  sound once, when you choose it: add the TV static sound, make it silent, or use a sound file you upload. Playback itself never changes:
+  it just plays whichever clip you picked;
+* set a channel to play **in order** or **shuffled** (a YouTube channel's "in order" follows its playlist), or leave it following the TV's Shuffle setting;
 * set brightness, auto-dim, the sleep timer and shuffle, and see the TV's status and recent log;
 * see how long each channel is (video lengths are read with `mediainfo` while the TV is in upload mode);
 * check for a newer release and update the TV from the page (see Updating below);

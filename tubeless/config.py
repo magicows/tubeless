@@ -85,6 +85,11 @@ class Config:
         return str(expand(self.static_long)) if self.static_long else str(ASSETS_DIR / "static_long.mp4")
 
     @property
+    def builtin_noise(self) -> str:
+        """The TV static's sound on its own (extracted from the built-in clip), for the 'separate static sound' option."""
+        return str(ASSETS_DIR / "static_noise.m4a")
+
+    @property
     def standby_custom(self) -> Path:
         """Where a picture chosen on the web page is kept."""
         return self.data / "standby.jpg"

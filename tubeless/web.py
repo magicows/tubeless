@@ -233,6 +233,7 @@ class WebServer:
         reset_standby() -> None               back to the picture that ships with Tubeless
         set_setting(key, value) -> None       raises ValueError("why not")
         set_channel_order(channel, order)     'shuffle' | 'order' | 'default'; raises ValueError("why not")
+        statics                               a statics.StaticManager (the TV static clip and its files; raises ValueError("why not"))
         status() -> dict                      uptime, temperature, memory ...
         logs(lines: int) -> str               the end of the app's log
         rescan(force: bool) -> dict           read video durations in the background; returns the scan status
@@ -338,6 +339,21 @@ class WebServer:
                             if ch["name"] in sums:
                                 ch["youtube"] = sums[ch["name"]]
                         self._json(200, state)
+                elif route == "/api/static/home":
+                    if self._authed():
+                        try:
+                            self._json(200, {"files": server.hooks.statics.home_files(self._query().get("kind", "clip"))})
+                        except ValueError as e:
+                            self._fail(400, str(e))
+                elif route == "/api/static/file":
+                    if self._authed():
+                        path = server.hooks.statics.current_file()
+                        try:
+                            ctype = {".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+                                     ".gif": "image/gif"}.get(path.suffix.lower(), "application/octet-stream")
+                            self._send(200, path.read_bytes(), ctype)
+                        except OSError:
+                            self._fail(404, "No clip.")
                 elif route == "/api/status":
                     if self._authed():
                         self._json(200, server.hooks.status())
@@ -412,6 +428,25 @@ class WebServer:
                     except ValueError as e:
                         return self._fail(400, str(e))
                     self._json(200, {"ok": True})
+                elif route in ("/api/static/preset", "/api/static/use", "/api/static/delete"):
+                    if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    st = server.hooks.statics
+                    try:
+                        if route.endswith("/preset"):
+                            st.choose_preset(str(data.get("name", "")))
+                            self._json(200, st.state())
+                        elif route.endswith("/use"):
+                            self._json(200, st.use(str(data.get("kind", "")), str(data.get("ref", "")), str(data.get("sound", "own")),
+                                                   str(data.get("sound_name", ""))))
+                        else:
+                            st.delete(str(data.get("kind", "")), str(data.get("name", "")))
+                            self._json(200, st.state())
+                    except ValueError as e:
+                        self._fail(400, str(e))
                 elif route == "/api/channel/order":
                     if not self._authed():
                         return
@@ -501,6 +536,16 @@ class WebServer:
 
             # -- PUT (one chunk of an upload)
             def do_PUT(self):
+                if self._route() == "/api/static/upload":
+                    if not self._authed():
+                        return
+                    q = self._query()
+                    try:
+                        length = int(self.headers.get("Content-Length") or 0)
+                        name = server.hooks.statics.save_upload(q.get("kind", "clip"), q.get("name", ""), self.rfile, length)
+                    except ValueError as e:
+                        return self._fail(400, str(e))
+                    return self._json(200, {"name": name, "static": server.hooks.statics.state()})
                 if self._route() == "/api/standby":
                     if not self._authed():
                         return
