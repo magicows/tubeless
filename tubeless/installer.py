@@ -294,25 +294,94 @@ def sudoers_rule(user: str) -> str:
            f"{user} ALL=(root) NOPASSWD: {cmds}\n"
 
 
-def default_config(name: str) -> str:
+def default_config(name: str, greeting: str = "") -> str:
     import json
-    return json.dumps({"name": name}, indent=2) + "\n"
+    data = {"name": name}
+    if greeting:
+        data["boot_greeting"] = greeting
+    return json.dumps(data, indent=2) + "\n"
 
 
 # ─────────────────────────────────────────────
 #  Doing things (every action goes through here, so --dry-run and tests can intercept)
 # ─────────────────────────────────────────────
+STALL_SECONDS = 600              # a long command that prints nothing for this long gets a warning
+
+
+def stall_advice(cmd: Sequence[str], quiet_for: float, last_line: str) -> str:
+    mins = max(1, int(quiet_for // 60))
+    what = " ".join(cmd)[:70]
+    return (f"\n!! No output from `{what}` for {mins} minutes.\n"
+            f"   It may only be slow (a Pi Zero 2 W unpacking big packages is), but it could be stuck. The last thing it said:\n"
+            f"       {last_line or '(nothing yet)'}\n"
+            f"   To check, in a second SSH session:  ps aux | grep -E 'dpkg|apt'\n"
+            f"   If dpkg is using 100% CPU and the newest *.dpkg-new file under /usr/lib has not grown for a few minutes,\n"
+            f"   it is stuck: press Ctrl-C here, run  sudo dpkg --configure -a && sudo apt-get -f install -y\n"
+            f"   and then run this installer again (it is safe to run again).\n")
+
+
 class Runner:
-    def __init__(self, dry_run: bool = False, say: Callable[[str], None] = print):
+    def __init__(self, dry_run: bool = False, say: Callable[[str], None] = print, stall_seconds: float = STALL_SECONDS):
         self.dry_run = dry_run
         self.say = say
+        self.stall_seconds = stall_seconds
 
     def run(self, *cmd: str, check: bool = True, env: Optional[dict] = None) -> "subprocess.CompletedProcess":
         if self.dry_run:
             self.say("      would run: " + " ".join(cmd))
             return subprocess.CompletedProcess(cmd, 0, "", "")
         full_env = dict(os.environ, **(env or {}))
-        return subprocess.run(cmd, check=check, env=full_env, capture_output=False)
+        rc = self._run_watched(cmd, full_env)
+        if check and rc != 0:
+            raise subprocess.CalledProcessError(rc, list(cmd))
+        return subprocess.CompletedProcess(cmd, rc)
+
+    def _run_watched(self, cmd: Sequence[str], env: dict) -> int:
+        """Run a command with its output on the terminal as usual (through a pty, so apt keeps its progress display), and
+        say something if it goes quiet for a long time: a frozen dpkg looks just like a slow one."""
+        import pty
+        import select
+        master, slave = pty.openpty()
+        try:
+            import fcntl
+            import struct
+            import termios
+            if sys.stdout.isatty():
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, struct.pack("HHHH", 0, 0, 0, 0)))
+        except (ImportError, OSError):
+            pass
+        proc = subprocess.Popen(list(cmd), stdout=slave, stderr=slave, env=env)
+        os.close(slave)
+        last_output = time.time()
+        last_line, warned_at = "", 0.0
+        try:
+            while True:
+                ready, _, _ = select.select([master], [], [], 1.0)
+                if ready:
+                    try:
+                        data = os.read(master, 4096)
+                    except OSError:
+                        data = b""
+                    if not data:
+                        break
+                    last_output, warned_at = time.time(), 0.0
+                    text = data.decode("utf-8", "replace")
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+                    tail = text.replace("\r", "\n").strip().splitlines()
+                    if tail:
+                        last_line = tail[-1].strip()[:120]
+                elif proc.poll() is not None:
+                    break
+                quiet = time.time() - last_output
+                if quiet >= self.stall_seconds and time.time() - warned_at >= self.stall_seconds:
+                    warned_at = time.time()
+                    self.say(stall_advice(cmd, quiet, last_line))
+            return proc.wait()
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+            os.close(master)
 
     def query(self, *cmd: str) -> "subprocess.CompletedProcess":
         """A read-only command whose result we look at (runs even in dry-run mode)."""
@@ -346,6 +415,7 @@ class Context:
     skip_sd_test: bool = False
     allow_changed_overlays: bool = False
     with_youtube: bool = False
+    greeting: str = ""
     runner: Runner = field(default_factory=Runner)
     reboot_needed: bool = False
 
@@ -517,7 +587,7 @@ def step_app(ctx: Context) -> None:
     if cfg.exists():
         ctx.say(f"      config kept: {cfg}")
     else:
-        ctx.runner.write(cfg, default_config(ctx.name), owner=ctx.user)
+        ctx.runner.write(cfg, default_config(ctx.name, ctx.greeting), owner=ctx.user)
         if not ctx.dry_run:
             _chown_tree(cfg.parent, ctx.user)
         ctx.say("      " + ctx.did(f"config created: {cfg}  (name: {ctx.name})", f"would create {cfg}  (name: {ctx.name})"))
@@ -669,7 +739,7 @@ def cmd_all(args) -> int:
     source = Path(args.source).resolve() if args.source else Path(__file__).resolve().parent.parent
     ctx = Context(user=user, home=home, source=source, name=args.name, boot_dir=Path(args.boot_dir) if args.boot_dir else None,
                   dry_run=args.dry_run, skip_sd_test=args.skip_sd_test, allow_changed_overlays=args.allow_changed_overlays,
-                  with_youtube=args.with_youtube, runner=Runner(args.dry_run))
+                  with_youtube=args.with_youtube, greeting=args.greeting or "", runner=Runner(args.dry_run))
     return install_all(ctx)
 
 
@@ -726,6 +796,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("all", help="do everything (run with sudo)")
     p.add_argument("--user", help="the user the TV runs as (default: the user who ran sudo)")
     p.add_argument("--name", default="Tubeless", help="the TV's display name (default: Tubeless)")
+    p.add_argument("--greeting", help="the line typed out on the boot screen (default: Wake up, couch potato...)")
     p.add_argument("--source", help="the checkout to install from (default: the one this file is in)")
     p.add_argument("--boot-dir")
     p.add_argument("--dry-run", action="store_true", help="show what would be done, change nothing")

@@ -158,6 +158,7 @@ def system(tmp_path, monkeypatch):
 
 def test_a_full_install_on_a_fresh_system(system):
     ctx, runner = system
+    ctx.greeting = "Wake up, Homer..."
     assert installer.install_all(ctx) == 0
     out = "\n".join(runner.lines)
     assert ctx.reboot_needed and "Reboot now" in out
@@ -179,6 +180,7 @@ def test_a_full_install_on_a_fresh_system(system):
     assert (ctx.appdir / "tubeless" / "app.py").exists() and (ctx.appdir / "packaging" / "tubeless.service.in").exists()
     assert not (ctx.appdir / "tests").exists() and not list(ctx.appdir.rglob("__pycache__"))
     assert '"name": "Den"' in (ctx.home / ".config" / "tubeless" / "config.json").read_text()
+    assert '"boot_greeting": "Wake up, Homer..."' in (ctx.home / ".config" / "tubeless" / "config.json").read_text()
     assert (ctx.home / "videos").is_dir()
 
     # units and the narrow sudoers rule
@@ -304,3 +306,43 @@ def test_with_youtube_leaves_an_existing_ytdlp_alone(system):
     assert installer.install_all(ctx) == 0
     assert not [c for c in runner.commands if c[0] == "python3" or c[0].endswith("/pip")]
     assert "already installed" in "\n".join(runner.lines)
+
+
+
+def test_default_config_only_mentions_the_greeting_when_given():
+    assert installer.default_config("Den") == '{\n  "name": "Den"\n}\n'
+    assert '"boot_greeting": "Hi"' in installer.default_config("Den", "Hi")
+
+
+def test_greeting_flag_is_accepted_by_the_installer_command_line(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(installer, "cmd_all", lambda args: (seen.update(vars(args)), 0)[1])   # main() builds its parser on each call
+    assert installer.main(["all", "--name", "Den", "--greeting", "Wake up, Homer...", "--dry-run"]) == 0
+    assert seen["greeting"] == "Wake up, Homer..." and seen["name"] == "Den"
+
+
+def test_runner_passes_output_and_exit_status_through(capsys):
+    r = installer.Runner(stall_seconds=60)
+    assert r.run("sh", "-c", "echo hello; exit 0").returncode == 0
+    assert "hello" in capsys.readouterr().out
+    with pytest.raises(subprocess.CalledProcessError) as e:
+        r.run("sh", "-c", "echo oops; exit 3")
+    assert e.value.returncode == 3
+    assert r.run("sh", "-c", "exit 4", check=False).returncode == 4
+
+
+def test_a_command_that_goes_quiet_for_too_long_gets_a_warning_with_its_last_line(capsys):
+    said = []
+    r = installer.Runner(say=said.append, stall_seconds=0.6)
+    r.run("sh", "-c", "echo Unpacking libllvm19; sleep 2.2; echo done")
+    out = capsys.readouterr().out
+    assert "Unpacking libllvm19" in out and "done" in out                            # the command's own output is untouched
+    assert said and "No output from" in said[0] and "Unpacking libllvm19" in said[0] and "dpkg --configure -a" in said[0]
+    assert len(said) <= 4                                                             # it warns now and then, not every second
+
+
+def test_a_chatty_command_gets_no_warning():
+    said = []
+    r = installer.Runner(say=said.append, stall_seconds=0.8)
+    r.run("sh", "-c", "for i in 1 2 3 4 5 6; do echo tick; sleep 0.3; done")
+    assert said == []
