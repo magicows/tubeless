@@ -430,7 +430,14 @@ def test_static_routes_need_the_pin(server):
     assert put_raw(server, "/api/static/upload?kind=clip&name=x.mp4", b"abc")[0] == 401
 
 
-def test_choosing_uploading_and_using_a_static_clip_over_http(server):
+@pytest.fixture
+def no_mediainfo(monkeypatch):
+    from types import SimpleNamespace
+    from tubeless import statics
+    monkeypatch.setattr(statics, "advice", SimpleNamespace(probe=lambda *a, **k: None))      # made-up bytes; mediainfo may or may not exist here
+
+
+def test_choosing_uploading_and_using_a_static_clip_over_http(server, no_mediainfo):
     token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
     assert call(server, "POST", "/api/static/preset", {"name": "none"}, token=token)[1]["choice"]["name"] == "none"
     code, body = call(server, "POST", "/api/static/preset", {"name": "loud"}, token=token)[:2]
@@ -449,7 +456,7 @@ def test_choosing_uploading_and_using_a_static_clip_over_http(server):
     assert code == 400 and "file type" in body["error"]
 
 
-def test_the_home_folder_picker_over_http(server):
+def test_the_home_folder_picker_over_http(server, no_mediainfo):
     token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
     (server.hooks.home / "clips").mkdir()
     (server.hooks.home / "clips" / "tv.mp4").write_bytes(b"v" * 10)

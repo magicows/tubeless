@@ -13,6 +13,13 @@ from tubeless.config import ASSETS_DIR, Config
 from tubeless.state import Settings, Store
 
 
+@pytest.fixture(autouse=True)
+def no_mediainfo(monkeypatch):
+    """These tests use made-up bytes for clips; whether mediainfo is installed on the machine running them must not matter."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(statics, "advice", SimpleNamespace(probe=lambda *a, **k: None))
+
+
 def manager(tmp_path, ffmpeg=None, **kw):
     cfg = Config(data_dir=str(tmp_path / "data"), videos_dir=str(tmp_path / "home" / "videos"),
                  static_short="/builtin_short.mp4", static_long="/builtin_long.mp4")
@@ -244,3 +251,25 @@ def test_the_app_plays_the_chosen_clip_between_videos_and_on_channel_change(tmp_
         assert r.app.web_state()["static"]["choice"]["label"] == "mine.mp4"
     finally:
         r.stop()
+
+
+def test_a_file_with_no_picture_is_refused_as_a_clip_and_one_with_no_sound_as_a_sound(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    mgr = manager(tmp_path)
+    monkeypatch.setattr(statics, "advice", SimpleNamespace(probe=lambda path, timeout=0: {"video": None, "audio": {"codec": "AAC"}, "duration": 2.0}))
+    with pytest.raises(ValueError) as e:
+        mgr.save_upload("clip", "song.mp4", io.BytesIO(b"v" * 50), 50)                 # only audio in it
+    assert "no picture" in str(e.value)
+    assert mgr.save_upload("sound", "song.mp3", io.BytesIO(b"v" * 50), 50) == "song.mp3"
+    monkeypatch.setattr(statics, "advice", SimpleNamespace(probe=lambda path, timeout=0: {"video": {"codec": "AVC"}, "audio": None, "duration": 2.0}))
+    assert mgr.save_upload("clip", "ok.mp4", io.BytesIO(b"v" * 50), 50) == "ok.mp4"
+    with pytest.raises(ValueError) as e:
+        mgr.save_upload("sound", "silent-film.mp3", io.BytesIO(b"v" * 50), 50)         # only a picture in it
+    assert "no sound" in str(e.value)
+    mgr.use("upload", "ok.mp4", "own")
+    assert mgr.state()["choice"]["label"] == "ok.mp4"
+    monkeypatch.setattr(statics, "advice", SimpleNamespace(probe=lambda path, timeout=0: {"video": None, "audio": None, "duration": 0}))
+    (tmp_path / "data" / "static" / "clip" / "blank.mp4").write_bytes(b"x")
+    with pytest.raises(ValueError) as e:
+        mgr.use("upload", "blank.mp4", "own")
+    assert "no picture" in str(e.value)
