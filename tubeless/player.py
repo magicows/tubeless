@@ -115,6 +115,9 @@ class MpvPlayer:
                 "--input-ipc-server=" + self.cfg.mpv_socket,
                 "--loop-playlist=no",
                 "--msg-level=all=warn",
+                # A Pi Zero 2 W has about 400 MB free in all. mpv's defaults buffer up to 150 MB of a network stream (and as much
+                # again behind the playhead), which is enough to starve the whole TV. A few seconds of buffer is plenty here.
+                "--demuxer-max-bytes=24MiB", "--demuxer-max-back-bytes=4MiB", "--cache-secs=20",
             ] + self._youtube_options(), stdout=out, stderr=subprocess.STDOUT)
         finally:
             if out is not subprocess.DEVNULL:

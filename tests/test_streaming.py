@@ -124,3 +124,29 @@ def test_with_no_wifi_the_message_says_so(tmp_path):
         assert r.app.wifi_available and not r.app.online()
     finally:
         r.stop()
+
+
+def test_a_video_that_never_starts_loading_is_skipped_after_a_while(tmp_path):
+    r = tv(tmp_path, url_delay=60.0)                                              # the load just hangs
+    try:
+        r.app.stream_give_up, r.app.stream_restart = 0.6, 99.0
+        r.player.command("set_property", "playlist-pos", 1)
+        assert wait_for(lambda: r.player.get("playlist-pos") is not None and r.player.get("playlist-pos") >= 2, timeout=5)   # moved on
+        assert wait_for(lambda: r.app._stream_notice_until > 0, timeout=5)        # and said so
+    finally:
+        r.stop()
+
+
+def test_if_mpv_stays_stuck_the_player_is_restarted_past_the_stuck_video(tmp_path):
+    r = tv(tmp_path, url_delay=60.0)
+    try:
+        starts = []
+        real = r.player.start
+        r.player.start = lambda path: (starts.append(path), real(path))[1]
+        r.app.stream_give_up, r.app.stream_restart = 99.0, 0.6                    # skipping did not help (or was not possible)
+        r.player.command("set_property", "playlist-pos", 1)
+        assert wait_for(lambda: len(starts) >= 1, timeout=5)
+        prog = r.app.playlists.progress(r.app.plan.channel)
+        assert prog["current"] != "yt-" + A and prog["current"].startswith("yt-")  # it carries on from the next video, not the stuck one
+    finally:
+        r.stop()

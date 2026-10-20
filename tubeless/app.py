@@ -114,6 +114,8 @@ class App:
         self._stream_notice_until = 0.0
         self.stream_notice_after = 2.0         # seconds of loading before the 'loading from YouTube' message appears
         self.stream_notice_for = 7.0
+        self.stream_give_up = 45.0             # a YouTube video that has not started after this long is skipped
+        self.stream_restart = 120.0            # ... and if mpv is still stuck on it after this, the player is restarted past it
         self._ytdlp = ytdlp                    # tests pass a FakeYtDlp; normally found when the upload page starts
         self.youtube: Optional[YouTubeManager] = None
         self.wifi = wifi                       # None, or something that can make a hotspot and join networks
@@ -909,7 +911,8 @@ class App:
     # ─────────────────────────────────────────
     #  Videos played straight from YouTube: say when they are loading, and when one can't be played
     # ─────────────────────────────────────────
-    def _watch_stream(self, rel: Optional[str]) -> None:
+    def _watch_stream(self, rel: Optional[str]) -> bool:
+        """Returns True if it restarted the player (so the caller's picture of what is playing is out of date)."""
         now = time.time()
         if self._stream_notice_until and now >= self._stream_notice_until:
             self._stream_notice_until = 0.0
@@ -936,6 +939,26 @@ class App:
             cur["shown"] = True
             title = self.library.title_of(self.plan.channel, rel)
             self._set_overlay(render.render_message(self.hw, "LOADING FROM YOUTUBE", [title[:44], "This can take about 10 seconds"], self.name))
+        if not cur["loaded"] and self.mode == "play":
+            waited = now - cur["since"]
+            if waited > self.stream_restart and not cur.get("restarted"):
+                cur["restarted"] = True
+                log.warning("mpv has been stuck loading %s for %.0f s: restarting the player past it", rel, waited)
+                self._restart_past(rel)
+                return True
+            elif waited > self.stream_give_up and not cur.get("skipped"):
+                cur["skipped"] = True
+                log.warning("%s has not started after %.0f s: skipping it", rel, waited)
+                self.cmd("playlist-next")                              # on to the static, then the next video
+
+    def _restart_past(self, rel: str) -> None:
+        """mpv is not answering its way out of a stuck load: start it again on the next episode instead of the stuck one."""
+        plan = self.plan
+        if plan is not None and rel in plan.order and len(plan.order) > 1:
+            nxt = plan.order[(plan.order.index(rel) + 1) % len(plan.order)]
+            self.playlists.set_progress(plan.channel, nxt, 0.0)
+        self._stream = None
+        self.start_playback()
 
     def _stream_failed(self, cur: dict) -> None:
         title = self.library.title_of(self.plan.channel, cur["rel"]) if self.plan else ""
@@ -959,7 +982,8 @@ class App:
             return
         self._last_pos = (pos, count)
         rel = self.playlists.episode_at(self.plan, pos)
-        self._watch_stream(rel)
+        if self._watch_stream(rel):
+            return                                              # the player was restarted: what we just read is out of date
         if rel is None:
             return                                              # on a static
         if self._pending_resume:

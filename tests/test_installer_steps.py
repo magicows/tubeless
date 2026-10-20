@@ -179,6 +179,11 @@ def test_a_full_install_on_a_fresh_system(system):
     # the app, config, videos
     assert (ctx.appdir / "tubeless" / "app.py").exists() and (ctx.appdir / "packaging" / "tubeless.service.in").exists()
     assert not (ctx.appdir / "tests").exists() and not list(ctx.appdir.rglob("__pycache__"))
+    assert "RuntimeWatchdogSec=15" in (ctx.etc / "systemd" / "system.conf.d" / "tubeless-watchdog.conf").read_text()
+    assert "Storage=persistent" in (ctx.etc / "systemd" / "journald.conf.d" / "tubeless-journal.conf").read_text()
+    wifi_conf = ctx.etc / "NetworkManager" / "conf.d" / "tubeless-wifi.conf"
+    assert not wifi_conf.exists() or "wifi.powersave = 2" in wifi_conf.read_text()          # only where NetworkManager exists
+    assert ("systemctl", "daemon-reexec") in runner.commands and ("systemctl", "restart", "systemd-journald") in runner.commands
     assert '"name": "Den"' in (ctx.home / ".config" / "tubeless" / "config.json").read_text()
     assert '"boot_greeting": "Wake up, Homer..."' in (ctx.home / ".config" / "tubeless" / "config.json").read_text()
     assert (ctx.home / "videos").is_dir()
@@ -346,3 +351,19 @@ def test_a_chatty_command_gets_no_warning():
     r = installer.Runner(say=said.append, stall_seconds=0.8)
     r.run("sh", "-c", "for i in 1 2 3 4 5 6; do echo tick; sleep 0.3; done")
     assert said == []
+
+
+def test_wifi_power_saving_is_turned_off_where_networkmanager_is_used(tmp_path):
+    ctx = Context(user="sam", home=tmp_path / "home", source=tmp_path, etc=tmp_path / "etc", runner=FakeRunner())
+    (ctx.etc / "NetworkManager").mkdir(parents=True)
+    installer.step_reliability(ctx)
+    assert "wifi.powersave = 2" in (ctx.etc / "NetworkManager" / "conf.d" / "tubeless-wifi.conf").read_text() and ctx.reboot_needed
+    ctx.reboot_needed = False
+    installer.step_reliability(ctx)                                                         # a second run changes nothing
+    assert not ctx.reboot_needed
+
+
+def test_no_wifi_setting_is_written_without_networkmanager(tmp_path):
+    ctx = Context(user="sam", home=tmp_path / "home", source=tmp_path, etc=tmp_path / "etc", runner=FakeRunner())
+    installer.step_reliability(ctx)
+    assert not (ctx.etc / "NetworkManager").exists()

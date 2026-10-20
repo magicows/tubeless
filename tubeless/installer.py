@@ -294,6 +294,16 @@ def sudoers_rule(user: str) -> str:
            f"{user} ALL=(root) NOPASSWD: {cmds}\n"
 
 
+WATCHDOG_CONF = ("# Installed by Tubeless: if the whole TV ever freezes, the Pi's hardware watchdog restarts it instead of leaving it dead.\n"
+                 "[Manager]\nRuntimeWatchdogSec=15\nRebootWatchdogSec=2min\n")
+JOURNAL_CONF = ("# Installed by Tubeless: keep the system log across restarts (a small amount), so a freeze can be looked into afterwards.\n"
+                "[Journal]\nStorage=persistent\nSystemMaxUse=30M\nRuntimeMaxUse=15M\n")
+
+
+WIFI_POWERSAVE_CONF = ("# Installed by Tubeless: the Pi Zero 2 W's Wi-Fi chip can drop off the network and stay off while its power saving is on.\n"
+                       "[connection]\nwifi.powersave = 2\n")
+
+
 def default_config(name: str, greeting: str = "") -> str:
     import json
     data = {"name": name}
@@ -620,6 +630,7 @@ def step_services(ctx: Context) -> None:
     ctx.runner.run("systemctl", "enable", *UNITS)
 
     step_wifi_setup(ctx)
+    step_reliability(ctx)
 
     rule = sudoers_rule(ctx.user)
     sudoers = ctx.etc / "sudoers.d" / "tubeless"
@@ -636,6 +647,31 @@ def step_services(ctx: Context) -> None:
         ctx.runner.write(sudoers, rule, mode=0o440)
         ctx.say("      " + ctx.did("sudoers rule installed (power off / reboot / restart Tubeless only)",
                                  "would install a sudoers rule (power off / reboot / restart Tubeless only)"))
+
+
+def step_reliability(ctx: Context) -> None:
+    """A hardware watchdog (a frozen TV restarts itself) and a system log that survives restarts (so a freeze can be diagnosed)."""
+    wrote = False
+    for rel, content, what in (("systemd/system.conf.d/tubeless-watchdog.conf", WATCHDOG_CONF, "hardware watchdog"),
+                               ("systemd/journald.conf.d/tubeless-journal.conf", JOURNAL_CONF, "persistent system log (30 MB at most)")):
+        target = ctx.etc / rel
+        if target.exists() and target.read_text() == content:
+            ctx.say(f"      {what} already set up")
+        else:
+            ctx.runner.write(target, content)
+            ctx.say("      " + ctx.did(f"{what} set up", f"would set up the {what}"))
+            wrote = True
+    if wrote:
+        ctx.runner.run("systemctl", "daemon-reexec")                  # the watchdog setting is read by systemd itself
+        ctx.runner.run("systemctl", "restart", "systemd-journald")
+    if (ctx.etc / "NetworkManager").is_dir():                         # Wi-Fi power saving off (2 = disabled)
+        target = ctx.etc / "NetworkManager" / "conf.d" / "tubeless-wifi.conf"
+        if target.exists() and target.read_text() == WIFI_POWERSAVE_CONF:
+            ctx.say("      Wi-Fi power saving already off")
+        else:
+            ctx.runner.write(target, WIFI_POWERSAVE_CONF)
+            ctx.say("      " + ctx.did("Wi-Fi power saving turned off (takes effect at the next restart)", "would turn Wi-Fi power saving off"))
+            ctx.reboot_needed = True
 
 
 def step_wifi_setup(ctx: Context) -> None:
