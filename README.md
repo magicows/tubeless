@@ -104,16 +104,15 @@ You need the build from the original guide (see [Credits](#credits)): a Pi Zero 
 
 1. Flash **Raspberry Pi OS Lite (32-bit, Trixie)** with the Raspberry Pi Imager. In its settings set a hostname and user, your Wi-Fi
    and Wi-Fi country, and turn on SSH with your public key.
-2. Boot the Pi and SSH in. The screen may stay dark until the installer has set up the display. Get the code and run the installer:
+2. Boot the Pi and SSH in. The screen stays dark until the installer has set up the display. Run the one-line installer (it downloads the
+   latest release, checks its SHA-256 and runs `install.sh`; `sudo` will ask for the user's password):
 
    ```
-   sudo apt install -y git
-   git clone https://github.com/magicows/tubeless.git
-   cd tubeless
-   sudo sh install.sh --name "Living Room"
+   curl -fsSL https://raw.githubusercontent.com/magicows/tubeless/main/get.sh | sudo sh -s -- --name "Living Room"
    ```
 
-   Add `--with-youtube` for YouTube channels. Add `--dry-run` first to see what it would do without changing anything.
+   Add `--with-youtube` for YouTube channels. Add `--dry-run` first to see what it would do without changing anything. It takes 30 to 45
+   minutes on a Zero 2 W, nearly all of it installing packages. If you prefer, clone the repository and run `sudo sh install.sh --name "Living Room"`.
 
    The installer:
    * tests the SD card by writing data and reading it back;
