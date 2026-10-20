@@ -24,7 +24,8 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          status=0
           python -m pytest -q -rf 2>&1 | tee pytest-output.txt || status=$?
           # show each failure as an annotation on the run, so it can be read without opening the log
-          grep -E '^(FAILED|ERROR) ' pytest-output.txt | cut -c1-300 | while read -r line; do echo "::error::$line"; done
-          exit ${status:-0}
+          { grep -E '^(FAILED|ERROR) ' pytest-output.txt || true; } | cut -c1-300 | while read -r line; do echo "::error::$line"; done
+          exit $status
