@@ -65,7 +65,8 @@ def test_menu_rows_by_touch(rig):
     rig.tap_row(3)                                                         # Brightness
     assert wait_for(lambda: rig.state["brightness"] == 25)
     assert rig.backlight.percent == 25
-    assert json.load(open(rig.cfg.data / "settings.json"))["brightness"] == 25
+    saved = lambda: json.load(open(rig.cfg.data / "settings.json")).get("brightness")
+    assert wait_for(lambda: saved() == 25)                                 # the app saves just after it changes (slow CI saw the gap)
     rig.tap_row(3)
     assert wait_for(lambda: rig.state["brightness"] == 50)
     rig.tap_row(4)                                                         # Settings >
