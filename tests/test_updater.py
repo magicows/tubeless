@@ -40,21 +40,36 @@ def make_tarball(tmp_path, version, extra=None, **kw):
     return buf.getvalue()
 
 
+REPO = "magicows/tubeless"
+
+
 class Release:
-    """A fake GitHub: the 'latest release' JSON and the files it points at."""
+    """A fake GitHub: the releases page's redirect, which files exist, and (separately, and optionally) the API's release notes."""
 
     def __init__(self, tmp_path, version="0.2.0", **kw):
+        self.version = version
         self.blob = make_tarball(tmp_path, version, **kw)
         self.sha = hashlib.sha256(self.blob).hexdigest()
         name = f"tubeless-{version}.tar.gz"
-        self.files = {"https://dl/" + name: self.blob, "https://dl/" + name + ".sha256": f"{self.sha}  {name}\n".encode()}
-        self.api = {"tag_name": "v" + version, "body": "What's new", "html_url": "https://github.com/x/y/releases/v" + version,
-                    "assets": [{"name": name, "browser_download_url": "https://dl/" + name},
-                               {"name": name + ".sha256", "browser_download_url": "https://dl/" + name + ".sha256"}]}
+        base = f"https://github.com/{REPO}/releases/download/v{version}/"
+        self.files = {base + name: self.blob, base + name + ".sha256": f"{self.sha}  {name}\n".encode()}
+        self.notes = "What's new"
+        self.api_down = None                                    # an exception the API 'raises' (a rate limit, say)
+        self.published = True
+
+    def latest_url(self, url):
+        if not self.published:
+            return f"https://github.com/{REPO}/releases"          # what GitHub shows when there are no releases
+        return f"https://github.com/{REPO}/releases/tag/v{self.version}"
+
+    def exists(self, url):
+        return url in self.files
 
     def fetch(self, url, limit=None):
-        if url.endswith("/releases/latest"):
-            return json.dumps(self.api).encode()
+        if url.startswith("https://api.github.com/"):
+            if self.api_down:
+                raise self.api_down
+            return json.dumps({"tag_name": "v" + self.version, "body": self.notes}).encode()
         if url not in self.files:
             raise OSError("404 " + url)
         return self.files[url]
@@ -68,8 +83,8 @@ def app(tmp_path):
 
 
 def make(app, rel, restarts=None):
-    return Updater(app, current="0.1.0", fetch=rel.fetch, restart=lambda: (restarts if restarts is not None else []).append(1),
-                   python=sys.executable)
+    return Updater(app, current="0.1.0", fetch=rel.fetch, latest_url=rel.latest_url, exists=rel.exists,
+                   restart=lambda: (restarts if restarts is not None else []).append(1), python=sys.executable)
 
 
 def test_version_comparison():
@@ -89,12 +104,31 @@ def test_check_says_whether_a_newer_release_exists(app, tmp_path):
 
 def test_check_reports_a_release_with_no_files_and_a_dead_network(app, tmp_path):
     rel = Release(tmp_path, "0.2.0")
-    rel.api["assets"] = []
+    rel.files.clear()                                          # the release exists but its files are not attached (yet)
     assert "no installable file" in make(app, rel).check()["error"]
-    def down(url, limit=None):
+
+    def down(url):
         raise OSError("offline")
-    st = Updater(app, current="0.1.0", fetch=down).check()
+    st = Updater(app, current="0.1.0", latest_url=down).check()
     assert st["state"] == "error" and "online" in st["error"]
+
+
+def test_a_rate_limited_github_api_does_not_stop_the_check(app, tmp_path):
+    """Everyone behind one home router shares GitHub's anonymous API allowance; the check must not need it."""
+    import urllib.error
+    rel = Release(tmp_path, "0.2.0")
+    rel.api_down = urllib.error.HTTPError("https://api.github.com/x", 403, "rate limit exceeded", {}, None)
+    st = make(app, rel).check()
+    assert st["state"] == "idle" and st["available"] and st["latest"] == "0.2.0" and st["notes"] == ""     # only the notes are missing
+    rel.api_down = None
+    assert make(app, rel).check()["notes"] == "What's new"
+
+
+def test_the_releases_page_itself_saying_no_gets_a_plain_message(app, tmp_path):
+    import urllib.error
+    def limited(url):
+        raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
+    assert "limiting requests" in Updater(app, current="0.1.0", latest_url=limited).check()["error"]
 
 
 def test_apply_installs_the_release_keeps_the_old_code_and_restarts(app, tmp_path):
@@ -129,7 +163,7 @@ def test_rollback_puts_the_previous_code_back(app, tmp_path):
 
 def test_a_download_that_does_not_match_its_checksum_changes_nothing(app, tmp_path):
     rel, restarts = Release(tmp_path, "0.2.0"), []
-    rel.files["https://dl/tubeless-0.2.0.tar.gz.sha256"] = b"0" * 64 + b"  tubeless-0.2.0.tar.gz\n"
+    rel.files[f"https://github.com/{REPO}/releases/download/v0.2.0/tubeless-0.2.0.tar.gz.sha256"] = b"0" * 64 + b"  tubeless-0.2.0.tar.gz\n"
     u = make(app, rel, restarts)
     u.check()
     st = u.apply()
@@ -159,13 +193,10 @@ def test_a_tarball_that_escapes_its_folder_is_refused(app, tmp_path):
 
 
 def test_a_release_whose_version_does_not_match_its_name_is_refused(app, tmp_path):
-    rel = Release(tmp_path, "0.2.0")
-    rel.api["tag_name"] = "v0.3.0"
-    name = "tubeless-0.3.0.tar.gz"
-    rel.api["assets"] = [{"name": name, "browser_download_url": "https://dl/" + name},
-                         {"name": name + ".sha256", "browser_download_url": "https://dl/" + name + ".sha256"}]
-    rel.files["https://dl/" + name] = rel.blob
-    rel.files["https://dl/" + name + ".sha256"] = f"{rel.sha}  {name}\n".encode()
+    rel = Release(tmp_path, "0.2.0")                           # the file inside says 0.2.0 ...
+    base = f"https://github.com/{REPO}/releases/download/v0.3.0/"
+    rel.files = {base + "tubeless-0.3.0.tar.gz": rel.blob, base + "tubeless-0.3.0.tar.gz.sha256": f"{rel.sha}  x\n".encode()}
+    rel.version = "0.3.0"                                      # ... but the release is called 0.3.0
     u = make(app, rel)
     u.check()
     assert "version doesn't match" in u.apply()["error"]
@@ -187,17 +218,17 @@ def test_nothing_to_install_when_up_to_date(app, tmp_path):
         u.apply()
 
 
-def test_no_release_published_yet_is_said_plainly(app):
-    import urllib.error
-    def none_yet(url, limit=None):
-        raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
-    assert "No release has been published" in Updater(app, current="0.1.0", fetch=none_yet).check()["error"]
+def test_no_release_published_yet_is_said_plainly(app, tmp_path):
+    rel = Release(tmp_path, "0.2.0")
+    rel.published = False
+    assert "No release has been published" in make(app, rel).check()["error"]
 
 
 def test_apply_leaves_a_marker_and_tells_the_tv_before_restarting(app, tmp_path):
     events = []
     marker = tmp_path / "data" / "updated.json"
-    u = Updater(app, current="0.1.0", fetch=Release(tmp_path, "0.2.0").fetch, python=sys.executable,
+    rel = Release(tmp_path, "0.2.0")
+    u = Updater(app, current="0.1.0", fetch=rel.fetch, latest_url=rel.latest_url, exists=rel.exists, python=sys.executable,
                 restart=lambda: events.append("restart"), notify=lambda kind, v: events.append((kind, v)), marker=marker)
     u.check(); u.apply()
     assert events == [("update", "0.2.0"), "restart"]                                # the card goes up first, then the restart

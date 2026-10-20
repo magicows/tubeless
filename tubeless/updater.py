@@ -73,6 +73,22 @@ def default_fetch(url: str, limit: int = MAX_DOWNLOAD) -> bytes:
     return data
 
 
+def default_latest_url(url: str) -> str:
+    """Where github.com/<repo>/releases/latest leads: .../releases/tag/vX.Y.Z. A web page, not the API, so no anonymous rate limit."""
+    req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "tubeless-updater"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        return r.geturl()
+
+
+def default_exists(url: str) -> bool:
+    req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "tubeless-updater"})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT):
+            return True
+    except (OSError, ValueError):
+        return False
+
+
 def _restart_service() -> None:
     """Restart Tubeless (this process included) through the one sudo rule the installer allows."""
     subprocess.Popen(["sudo", "-n", "systemctl", "restart", "tubeless"], start_new_session=True,
@@ -110,8 +126,10 @@ def _dir_digest(path: Path) -> str:
 class Updater:
     def __init__(self, appdir, current: str = __version__, repo: str = REPO,
                  fetch: Callable[[str], bytes] = default_fetch, restart: Callable[[], None] = _restart_service,
+                 latest_url: Callable[[str], str] = default_latest_url, exists: Callable[[str], bool] = default_exists,
                  python: str = sys.executable, clock: Callable[[], float] = time.time,
                  notify: Callable[[str, str], None] = lambda kind, version: None, marker: Optional[Path] = None):
+        self.latest_url, self.exists = latest_url, exists
         self.notify, self.marker = notify, Path(marker) if marker else None
         self.appdir = Path(appdir)
         self.current, self.repo, self.fetch, self.restart = current, repo, fetch, restart
@@ -157,24 +175,34 @@ class Updater:
 
     # --- check -----------------------------------------------------------------------------------
     def check(self) -> dict:
+        """Find the latest release. The version comes from the releases page (no API, so GitHub's anonymous rate limit that a
+        whole household shares can't stop it); the API is only asked for the release notes, and its failure is ignored."""
         self._set(state="checking")
         try:
-            raw = self.fetch(f"https://api.github.com/repos/{self.repo}/releases/latest")
-            rel = json.loads(raw)
-            version = str(rel["tag_name"]).lstrip("v")
+            final = self.latest_url(f"https://github.com/{self.repo}/releases/latest")
+            if "/releases/tag/" not in final:
+                raise UpdateError("No release has been published yet.")
+            tag = final.rstrip("/").rsplit("/", 1)[-1]
+            version = tag.lstrip("v")
             parse_version(version)
-            assets = {a["name"]: a["browser_download_url"] for a in rel.get("assets", [])}
-            tar_name = f"tubeless-{version}.tar.gz"
-            if tar_name not in assets or tar_name + ".sha256" not in assets:
+            name = f"tubeless-{version}.tar.gz"
+            base = f"https://github.com/{self.repo}/releases/download/{tag}/"
+            if not (self.exists(base + name) and self.exists(base + name + ".sha256")):
                 raise UpdateError(f"Release {version} has no installable file attached yet.")
-            self._latest = {"version": version, "notes": str(rel.get("body") or "")[:4000], "url": rel.get("html_url", ""),
-                            "tar": assets[tar_name], "sha": assets[tar_name + ".sha256"], "name": tar_name}
+            notes = ""
+            try:
+                notes = str(json.loads(self.fetch(f"https://api.github.com/repos/{self.repo}/releases/tags/{tag}")).get("body") or "")[:4000]
+            except Exception:                                              # rate-limited, offline, odd answer: the notes are optional
+                pass
+            self._latest = {"version": version, "notes": notes, "url": f"https://github.com/{self.repo}/releases/tag/{tag}",
+                            "tar": base + name, "sha": base + name + ".sha256", "name": name}
             self._checked_at = self.clock()
             self._set(state="idle")
         except UpdateError as e:
             self._set(state="error", error=str(e))
         except urllib.error.HTTPError as e:
-            self._set(state="error", error="No release has been published yet." if e.code == 404 else f"GitHub said no ({e.code}).")
+            self._set(state="error", error="GitHub is limiting requests from this network. Try again in a while." if e.code in (403, 429)
+                      else "No release has been published yet." if e.code == 404 else f"GitHub said no ({e.code}).")
         except (OSError, ValueError, KeyError, TypeError) as e:
             log.info("update check failed: %s", e)
             self._set(state="error", error="Couldn't check for updates (is the TV online?).")
