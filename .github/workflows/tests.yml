@@ -20,4 +20,11 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
-      - run: python -m pytest -q
+      - name: Run the tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q -rf 2>&1 | tee pytest-output.txt || status=$?
+          # show each failure as an annotation on the run, so it can be read without opening the log
+          grep -E '^(FAILED|ERROR) ' pytest-output.txt | cut -c1-300 | while read -r line; do echo "::error::$line"; done
+          exit ${status:-0}
