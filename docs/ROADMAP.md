@@ -49,7 +49,10 @@
 5. ~~**Setup mode**~~ done and verified on the trial TV (Settings > Wi-Fi setup; automatic on first boot; Trixie/Bookworm only): first-boot hotspot with a QR code, captive portal, Wi-Fi country and the phone's clock/timezone.
 6. ~~**`get.sh` one-line installer**~~ written (release workflow publishes a tarball + SHA-256 on a `v*` tag; `get.sh` downloads, checks and runs
    `install.sh`). Not yet run on a blank card (item 7). The web page's updater and rollback are built too.
-7. **Fresh-card test**: flash with Imager, run `get.sh`, no other preparation. The author's SimpTV upgrade (Bullseye to Trixie) is this test.
+7. ~~**Fresh-card test**~~ done (2026-10): SimpTV rebuilt from a blank Trixie card with `get.sh --with-youtube`, videos and settings copied across.
+   It took about 40 minutes, mostly the package step, and found: first-run touch calibration skipped on a card with no videos (fixed),
+   Upload offering hotspot setup while a saved Wi-Fi was still connecting after boot (fixed), `dpkg` wedging once on `libllvm19`
+   (unexplained; Ctrl-C then `dpkg --configure -a` and run it again cleared it). The migration guide should record these.
 8. **Install-time page** (idea, from the SimpTV rebuild): the installer starts a tiny web page, standard library only, before the long package
    download. It shows live progress (the TV screen stays dark until the display is set up, so today nothing says what is happening) and lets
    the builder set the TV name, boot greeting, YouTube yes/no and the standby picture while the install runs. It writes `config.json`, which the
