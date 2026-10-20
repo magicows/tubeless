@@ -356,6 +356,9 @@ class WebServer:
                             self._send(200, Path(server.hooks.standby_path()).read_bytes(), "image/jpeg")
                         except OSError:
                             self._fail(404, "No picture.")
+                elif route == "/api/yt/ytdlp":
+                    if self._authed() and self._yt():
+                        self._json(200, server.youtube.ytdlp_info())
                 elif route == "/api/yt/progress":
                     if self._authed() and self._yt():
                         self._json(200, server.youtube.progress())
@@ -467,6 +470,10 @@ class WebServer:
                         self._yt_call(lambda: (yt.set_mode(ch, str(data.get("mode", ""))), {"mode": data.get("mode")})[1])
                     elif route == "/api/yt/sync":
                         self._yt_call(lambda: {"queued": yt.sync(ch or None)})
+                    elif route == "/api/yt/ytdlp/check":
+                        self._yt_call(yt.check_ytdlp)
+                    elif route == "/api/yt/ytdlp/update":
+                        self._yt_call(yt.update_ytdlp)
                     elif route == "/api/yt/cancel":
                         self._yt_call(lambda: (yt.cancel(), {"ok": True})[1])
                     elif route == "/api/channel/delete":

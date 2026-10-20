@@ -69,7 +69,8 @@ don't want. Later you can paste another playlist, or one video, and it merges in
 * Public and unlisted playlists only. There is no YouTube sign-in.
 
 This needs two extras, which the installer adds when you ask (`--with-youtube`, see [Install](#install-on-a-fresh-pi)):
-[yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg. Tubeless does not include either. YouTube changes often, so keep yt-dlp current:
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg. Tubeless does not include either. YouTube changes often, so keep yt-dlp current. The upload page's TV tab has a **YouTube downloader** card that shows the
+version, checks for a newer one and updates it (not while videos are downloading). Or from a shell on the TV:
 
 ```
 python3 -m tubeless youtube status

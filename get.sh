@@ -3,7 +3,7 @@
 #
 #     curl -fsSL https://raw.githubusercontent.com/magicows/tubeless/main/get.sh | sudo sh -s -- --name "Living Room"
 #
-# Everything after `--` goes to install.sh (try --dry-run first). TUBELESS_VERSION=0.1.0 picks a release instead of the latest.
+# Everything after `--` goes to install.sh: --name, --greeting, --with-youtube (try --dry-run first). TUBELESS_VERSION=0.1.0 picks a release instead of the latest.
 # Running it again updates the code. Your videos and settings are never touched.
 set -eu
 REPO="magicows/tubeless"

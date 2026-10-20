@@ -159,6 +159,12 @@
         <div class="row"><button id="updCheck" class="ghost">Check for updates</button><button id="updApply" class="hide">Update now</button><button id="updBack" class="ghost hide"></button></div>
         <p class="msg" id="updmsg"></p>
       </section>
+      <section class="card hide" id="ytdlpCard">
+        <h2>YouTube downloader</h2>
+        <p class="sub" id="ytdlpLine"></p>
+        <div class="row"><button id="ytdlpCheck" class="ghost">Check for a newer yt-dlp</button><button id="ytdlpUpdate" class="hide">Update yt-dlp</button></div>
+        <p class="msg" id="ytdlpMsg"></p>
+      </section>
       <section class="card"><h2>About</h2><p class="sub" id="about"></p></section>
     </div>
   </div>
@@ -212,6 +218,7 @@ async function load() {
   renderChannels();
   renderSettings();
   loadStatus();
+  if (!ytdlpTimer) loadYtdlp();
   loadStandby();
   if (!updTimer) loadUpdate();
   if (ytChannel) { const c = state.channels.find(x => x.name === ytChannel); if (!c) showChannelList(); }
@@ -282,6 +289,35 @@ $('logBtn').onclick = async () => {
     const box = $('logbox'); box.textContent = (await res.text()) || '(the log is empty)'; box.classList.remove('hide'); box.scrollTop = box.scrollHeight;
   } catch (e) { say($('setmsg'), e.message, 'bad'); }
 };
+
+let ytdlpTimer = null;
+function renderYtdlp(u) {
+  const card = $('ytdlpCard');
+  card.classList.toggle('hide', !(state.youtube && state.youtube.available));
+  if (!u) return;
+  $('ytdlpLine').textContent = 'yt-dlp ' + (u.version || '?') + (u.latest ? (u.update_available ? '  -  version ' + u.latest + ' is available' : '  -  up to date') : '') +
+    '. YouTube changes often; if a video won\'t play or add, an update usually fixes it.';
+  const working = u.state === 'updating';
+  $('ytdlpUpdate').classList.toggle('hide', !(u.can_update && u.update_available && !working));
+  $('ytdlpCheck').disabled = working;
+  if (working) say($('ytdlpMsg'), 'Updating... this can take a minute or two. Keep this page open.', '');
+  else if (u.state === 'done') say($('ytdlpMsg'), 'Updated to ' + u.to + '.', 'ok');
+  else if (u.state === 'error') say($('ytdlpMsg'), u.error, 'bad');
+  else if (!u.can_update) say($('ytdlpMsg'), 'This yt-dlp was not installed by Tubeless, so it has to be updated the way you installed it.', '');
+  else if (u.busy && u.update_available) say($('ytdlpMsg'), 'Downloads are running; update when they finish.', '');
+  else say($('ytdlpMsg'), '', '');
+  if (working && !ytdlpTimer) ytdlpTimer = setInterval(loadYtdlp, 2000);
+  if (!working && ytdlpTimer) { clearInterval(ytdlpTimer); ytdlpTimer = null; load().catch(() => {}); }
+}
+async function loadYtdlp() {
+  if (!(state.youtube && state.youtube.available)) return renderYtdlp(null);
+  try { renderYtdlp(await api('/api/yt/ytdlp')); } catch (e) {}
+}
+async function ytdlpCall(path) {
+  try { renderYtdlp(await api(path, {method: 'POST', body: '{}'})); } catch (e) { say($('ytdlpMsg'), e.message, 'bad'); }
+}
+$('ytdlpCheck').onclick = () => { say($('ytdlpMsg'), 'Checking...', ''); ytdlpCall('/api/yt/ytdlp/check'); };
+$('ytdlpUpdate').onclick = () => { if (confirm('Update yt-dlp now? Downloads are paused while it updates.')) ytdlpCall('/api/yt/ytdlp/update'); };
 
 let updTimer = null;
 function renderUpdate(u) {

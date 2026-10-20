@@ -42,6 +42,31 @@ FORMAT_JOINED = "bv*[height<=480][fps<=30][vcodec^=avc1]+ba[acodec^=mp4a]"
 FORMAT_SINGLE = "b[height<=480][fps<=30][vcodec^=avc1][acodec^=mp4a]"
 
 
+YTDLP_RELEASES = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+
+
+def ytdlp_version_key(text: str) -> Tuple[int, ...]:
+    """'2026.08.19' -> (2026, 8, 19); a dev build '2025.09.08.232917.dev0' -> (2025, 9, 8, 232917). Unreadable -> ()."""
+    nums = []
+    for part in (text or "").strip().split("."):
+        if not part.isdigit():
+            break
+        nums.append(int(part))
+    return tuple(nums)
+
+
+def ytdlp_newer(latest: str, current: str) -> bool:
+    a, b = ytdlp_version_key(latest), ytdlp_version_key(current)
+    return bool(a and b and a > b)
+
+
+def default_fetch_json(url: str) -> dict:
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "tubeless", "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read(1_000_000))
+
+
 class YouTubeError(Exception):
     """Something to tell the user, in words they can act on."""
 
@@ -214,6 +239,35 @@ class YtDlp:
         except (OSError, subprocess.SubprocessError):
             return None
 
+    def pip_path(self) -> Optional[str]:
+        """The pip beside this yt-dlp, if Tubeless's installer put it in a venv of its own (otherwise we don't update it)."""
+        if not self.path:
+            return None
+        pip = Path(self.path).parent / "pip"
+        return str(pip) if pip.exists() else None
+
+    def can_update(self) -> bool:
+        return self.pip_path() is not None
+
+    def update(self, timeout: int = 900) -> Optional[str]:
+        """pip install --upgrade yt-dlp, in its own venv. Returns the version afterwards."""
+        pip = self.pip_path()
+        if not pip:
+            raise YouTubeError("This yt-dlp wasn't installed by Tubeless, so update it the way you installed it.", 400)
+        try:
+            res = subprocess.run(["nice", "-n", "10", pip, "install", "--upgrade", "--disable-pip-version-check", "yt-dlp"],
+                                 capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise YouTubeError("The update took too long and was stopped. Try again.", 504)
+        except OSError as e:
+            raise YouTubeError(f"Couldn't run pip ({e.strerror or e}).", 500)
+        if res.returncode != 0:
+            tail = [l for l in (res.stderr or res.stdout).splitlines() if l.strip()][-1:] or ["pip failed"]
+            offline = "temporary failure" in (res.stderr or "").lower() or "name or service not known" in (res.stderr or "").lower()
+            raise YouTubeError("The TV couldn't reach the internet to update." if offline
+                               else "The update failed (" + tail[0][:140] + ").", 502)
+        return self.version()
+
     def _base(self) -> List[str]:
         return [self.path, "--no-update", "--no-warnings", "--no-config", "--ignore-config", "--no-cache-dir"]
 
@@ -370,7 +424,11 @@ class ChannelFile:
 # ─────────────────────────────────────────────
 class YouTubeManager:
     def __init__(self, root, ytdlp, reserve: int = 300 * 1024 * 1024, disk_free: Optional[Callable[[Path], int]] = None,
-                 on_change: Optional[Callable[[], None]] = None, cache_seconds: float = 600.0):
+                 on_change: Optional[Callable[[], None]] = None, cache_seconds: float = 600.0,
+                 fetch_json: Callable[[str], dict] = default_fetch_json):
+        self._fetch_json = fetch_json
+        self._ytdlp_state: dict = {"state": "idle"}
+        self._ytdlp_latest: Optional[str] = None
         self.root = Path(root)
         self.yt = ytdlp
         self.reserve = reserve
@@ -408,6 +466,61 @@ class YouTubeManager:
     def status(self) -> dict:
         return {"available": self.yt.available(), "version": self.yt.version() if self.yt.available() else None,
                 "ffmpeg": bool(getattr(self.yt, "has_ffmpeg", True))}
+
+    # -- keeping yt-dlp current (YouTube changes often, and an old yt-dlp is the usual reason a video won't play)
+    def ytdlp_info(self) -> dict:
+        with self._lock:
+            info = dict(self._ytdlp_state)
+            latest = self._ytdlp_latest
+        version = self.yt.version() if self.yt.available() else None
+        info.update({"available": self.yt.available(), "version": version, "can_update": bool(self.yt.available() and self.yt.can_update()),
+                     "latest": latest, "update_available": bool(latest and version and ytdlp_newer(latest, version)),
+                     "busy": self.busy()})
+        return info
+
+    def check_ytdlp(self) -> dict:
+        try:
+            data = self._fetch_json(YTDLP_RELEASES)
+            latest = str(data["tag_name"]).lstrip("v")
+            if not ytdlp_version_key(latest):
+                raise ValueError("odd version")
+        except (OSError, ValueError, KeyError, TypeError):
+            with self._lock:
+                self._ytdlp_state = {"state": "error", "error": "Couldn't check for a newer yt-dlp (is the TV online?)."}
+            return self.ytdlp_info()
+        with self._lock:
+            self._ytdlp_latest = latest
+            self._ytdlp_state = {"state": "idle"}
+        return self.ytdlp_info()
+
+    def update_ytdlp(self) -> dict:
+        """Start the update in the background; the page polls ytdlp_info()."""
+        if not self.yt.available() or not self.yt.can_update():
+            raise YouTubeError("This yt-dlp wasn't installed by Tubeless, so update it the way you installed it.", 400)
+        if self.busy():
+            raise YouTubeError("Wait until the downloads finish, then update.", 409)
+        with self._lock:
+            if self._ytdlp_state.get("state") == "updating":
+                raise YouTubeError("An update is already running.", 409)
+            self._ytdlp_state = {"state": "updating"}
+
+        def work():
+            try:
+                before = self.yt.version()
+                after = self.yt.update()
+                with self._lock:
+                    self._ytdlp_state = {"state": "done", "from": before, "to": after}
+            except YouTubeError as e:
+                with self._lock:
+                    self._ytdlp_state = {"state": "error", "error": e.message}
+            except Exception:
+                log.exception("yt-dlp update failed")
+                with self._lock:
+                    self._ytdlp_state = {"state": "error", "error": "The update failed."}
+            self.on_change()
+
+        threading.Thread(target=work, daemon=True).start()
+        return self.ytdlp_info()
 
     def is_youtube_channel(self, folder_name: str) -> bool:
         return ChannelFile.exists(self.root / folder_name)
@@ -658,7 +771,20 @@ class FakeYtDlp:
         self.calls: List[tuple] = []
 
     def available(self): return self.is_available
-    def version(self): return "fake-2026.01.01"
+    version_now = "2026.01.01"
+    updates_to = "2026.02.02"
+    can_update_it = True
+    update_error = None
+
+    def version(self): return self.version_now
+    def can_update(self): return self.can_update_it
+
+    def update(self, timeout=900):
+        self.calls.append(("update",))
+        if self.update_error:
+            raise YouTubeError(self.update_error, 502)
+        self.version_now = self.updates_to
+        return self.version_now
 
     def listing(self, url, timeout=180):
         self.calls.append(("listing", url))

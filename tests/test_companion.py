@@ -130,3 +130,19 @@ def test_without_yt_dlp_the_page_is_told_and_syncing_is_refused(tmp_path):
         assert http(base, "POST", "/api/yt/sync", {}, tok)[0] == 501
     finally:
         r.stop()
+
+
+def test_ytdlp_can_be_checked_and_updated_from_the_page(tv):
+    assert http(tv.base, "GET", "/api/yt/ytdlp")[0] == 401
+    assert http(tv.base, "POST", "/api/yt/ytdlp/update", {})[0] == 401
+    tv.app.youtube._fetch_json = lambda url: {"tag_name": "2026.02.02"}                # no real network in tests
+    status, info = call(tv, "GET", "/api/yt/ytdlp")
+    assert status == 200 and info["version"] == "2026.01.01" and info["can_update"] is True and info["update_available"] is False
+    status, info = call(tv, "POST", "/api/yt/ytdlp/check", {})
+    assert status == 200 and info["update_available"] is True and info["latest"] == "2026.02.02"
+    assert call(tv, "POST", "/api/yt/ytdlp/update", {})[0] == 200
+    assert wait_for(lambda: call(tv, "GET", "/api/yt/ytdlp")[1]["state"] == "done")
+    assert call(tv, "GET", "/api/yt/ytdlp")[1]["version"] == "2026.02.02"
+    tv.fake.can_update_it = False
+    status, body = call(tv, "POST", "/api/yt/ytdlp/update", {})
+    assert status == 400 and "wasn't installed by Tubeless" in body["error"]

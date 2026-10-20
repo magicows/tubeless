@@ -335,3 +335,120 @@ def test_the_real_ytdlp_is_driven_with_safe_arguments(tmp_path, monkeypatch):
     assert "--no-playlist" in cmd and any("height<=480" in c for c in cmd) and "--no-update" in cmd
     assert got == [(0.5, "downloading"), (0.99, "joining")]
     assert yt.listing(f"https://youtu.be/{A}").kind == "video"
+
+
+# ---- keeping yt-dlp current ---------------------------------------------------------------------------------------
+def wait_until(fn, timeout=3.0):
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        if fn():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_ytdlp_versions_compare_like_dates():
+    from tubeless.youtube import ytdlp_newer, ytdlp_version_key
+    assert ytdlp_version_key("2026.08.19") == (2026, 8, 19) and ytdlp_version_key("2025.09.08.232917.dev0") == (2025, 9, 8, 232917)
+    assert ytdlp_newer("2026.08.19", "2025.09.08.232917.dev0") and ytdlp_newer("2026.10.01", "2026.09.30")
+    assert not ytdlp_newer("2026.08.19", "2026.08.19") and not ytdlp_newer("garbage", "2026.08.19") and not ytdlp_newer("2026.08.19", "")
+
+
+def test_check_says_whether_a_newer_ytdlp_exists(root):
+    mgr, fake = make(root, fetch_json=lambda url: {"tag_name": "2026.08.19"})
+    fake.version_now = "2026.01.01"
+    info = mgr.check_ytdlp()
+    assert info["latest"] == "2026.08.19" and info["update_available"] is True and info["can_update"] is True
+    fake.version_now = "2026.08.19"
+    assert mgr.ytdlp_info()["update_available"] is False
+
+
+def test_check_reports_being_offline(root):
+    def offline(url):
+        raise OSError("no route")
+    mgr, _ = make(root, fetch_json=offline)
+    info = mgr.check_ytdlp()
+    assert info["state"] == "error" and "online" in info["error"] and info["update_available"] is False
+
+
+def test_update_runs_in_the_background_and_reports_the_new_version(root):
+    mgr, fake = make(root, fetch_json=lambda url: {"tag_name": "2026.02.02"})
+    mgr.check_ytdlp()
+    mgr.update_ytdlp()
+    assert wait_until(lambda: mgr.ytdlp_info()["state"] == "done")
+    info = mgr.ytdlp_info()
+    assert info["to"] == "2026.02.02" and info["version"] == "2026.02.02" and info["update_available"] is False
+    assert ("update",) in fake.calls
+
+
+def test_a_failed_update_says_why(root):
+    mgr, fake = make(root)
+    fake.update_error = "The TV couldn't reach the internet to update."
+    mgr.update_ytdlp()
+    assert wait_until(lambda: mgr.ytdlp_info()["state"] == "error")
+    assert "internet" in mgr.ytdlp_info()["error"]
+
+
+def test_an_ytdlp_that_tubeless_did_not_install_is_not_updated(root):
+    mgr, fake = make(root)
+    fake.can_update_it = False
+    with pytest.raises(YouTubeError) as e:
+        mgr.update_ytdlp()
+    assert "wasn't installed by Tubeless" in e.value.message and ("update",) not in fake.calls
+
+
+def test_no_ytdlp_update_while_videos_are_downloading(root):
+    mgr, fake = make(root, fake={"delay": 1.0})
+    mgr.create("1.cartoons")
+    mgr.add("1.cartoons", "https://www.youtube.com/playlist?list=PLlistlist12")
+    mgr.sync("1.cartoons")
+    assert wait_until(mgr.busy)
+    with pytest.raises(YouTubeError) as e:
+        mgr.update_ytdlp()
+    assert e.value.status == 409
+    mgr.shutdown()
+
+
+def make_fake_venv(tmp_path, pip_body):
+    """A folder that looks like the installer's yt-dlp venv: a yt-dlp that prints its version, and a pip we control."""
+    import os
+    import stat
+    bin_dir = tmp_path / "ytdlp" / "bin"
+    bin_dir.mkdir(parents=True)
+    ver = tmp_path / "ytdlp" / "version.txt"
+    ver.write_text("2026.01.01")
+    (bin_dir / "yt-dlp").write_text(f'#!/bin/sh\ncat "{ver}"\n')
+    (bin_dir / "pip").write_text("#!/bin/sh\n" + pip_body.replace("VER", str(ver)) + "\n")
+    for f in ("yt-dlp", "pip"):
+        os.chmod(bin_dir / f, os.stat(bin_dir / f).st_mode | stat.S_IEXEC)
+    return str(bin_dir / "yt-dlp")
+
+
+def test_the_real_ytdlp_class_updates_through_the_pip_beside_it(tmp_path):
+    from tubeless.youtube import YtDlp
+    yt = YtDlp(make_fake_venv(tmp_path, 'echo "2026.08.19" > VER'))
+    assert yt.can_update() and yt.version() == "2026.01.01"
+    assert yt.update() == "2026.08.19"
+
+
+def test_a_failing_pip_is_reported_in_plain_words(tmp_path):
+    from tubeless.youtube import YtDlp
+    yt = YtDlp(make_fake_venv(tmp_path, 'echo "ERROR: no matching distribution" >&2; exit 1'))
+    with pytest.raises(YouTubeError) as e:
+        yt.update()
+    assert "update failed" in e.value.message and "no matching distribution" in e.value.message
+    offline = YtDlp(make_fake_venv(tmp_path / "b", 'echo "Temporary failure in name resolution" >&2; exit 1'))
+    with pytest.raises(YouTubeError) as e:
+        offline.update()
+    assert "internet" in e.value.message
+
+
+def test_a_ytdlp_without_a_pip_beside_it_cannot_be_updated(tmp_path):
+    from tubeless.youtube import YtDlp
+    path = make_fake_venv(tmp_path, "exit 0")
+    (tmp_path / "ytdlp" / "bin" / "pip").unlink()
+    yt = YtDlp(path)
+    assert not yt.can_update()
+    with pytest.raises(YouTubeError):
+        yt.update()
