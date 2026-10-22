@@ -387,3 +387,94 @@ def test_the_helper_says_so_when_the_chip_does_not_come_back_or_cannot_be_found(
     assert h.cmd_recover(str(root / "class"), settle=0, wait_for_device=2) == 1
     assert h.cmd_recover(str(tmp_path / "nothing"), settle=0, wait_for_device=1) == 3
     assert h.main(["helper", "recover", "extra"]) == 64                                     # no arguments are accepted
+
+
+# ---- the failure the log of a real crash showed: the chip is dead but the interface keeps its address ---------------------------
+def test_a_chip_that_died_but_kept_its_address_is_noticed_and_reloaded(tmp_path):
+    wifi = FakeWifi(ip="192.168.1.9", saved=True)
+    r = Rig(tmp_path, wifi=wifi, setup_auto=False)
+    try:
+        time.sleep(0.5)
+        assert calls_of(wifi, "recover") == []
+        wifi.zombie = True                                                        # every request to the chip times out, the address stays
+        assert wifi.connected_ip() == "192.168.1.9"                               # (so an address check alone sees nothing wrong)
+        assert wait_for(lambda: len(calls_of(wifi, "recover")) == 1, timeout=4)
+        assert wait_for(lambda: wifi.zombie is False)                             # and the reload revived it
+        time.sleep(1.5)
+        assert len(calls_of(wifi, "recover")) == 1 and not r.power.reboot_requested
+    finally:
+        r.stop()
+
+
+def test_one_lost_ping_is_not_an_outage(tmp_path):
+    wifi = FakeWifi(ip="192.168.1.9", saved=True)
+    r = Rig(tmp_path, wifi=wifi, setup_auto=False)
+    try:
+        wifi.zombie = True
+        time.sleep(0.25)                                                          # shorter than the 0.4 s grace used in these tests
+        wifi.zombie = False
+        time.sleep(1.0)
+        assert calls_of(wifi, "recover") == [] and not r.power.reboot_requested
+    finally:
+        r.stop()
+
+
+def test_if_reloading_the_chip_does_not_help_the_tv_restarts_itself_once(tmp_path):
+    wifi = FakeWifi(ip="192.168.1.9", saved=True)
+    wifi.recovers = False
+    r = Rig(tmp_path, wifi=wifi, setup_auto=False)
+    try:
+        time.sleep(0.4)                                                           # the network has worked: that is what permits a restart
+        wifi.zombie = True
+        assert wait_for(lambda: len(calls_of(wifi, "recover")) == 1, timeout=4)
+        assert not r.power.reboot_requested                                       # it gives the reload time to work first (0.6 s here)
+        assert wait_for(lambda: r.power.reboot_requested, timeout=5)
+        assert r.display.frame565 is not None                                     # 'WI-FI LOST' was put on the screen first
+        r.power.reboot_requested = False
+        time.sleep(2.0)
+        assert not r.power.reboot_requested                                       # once per boot: never a restart loop
+    finally:
+        r.stop()
+
+
+def test_a_tv_that_never_had_a_network_does_not_restart_itself(tmp_path):
+    wifi = FakeWifi(ip=None, saved=True)                                          # out of range of its network from the start
+    wifi.recovers = False
+    r = Rig(tmp_path, wifi=wifi, setup_auto=False)
+    try:
+        assert wait_for(lambda: len(calls_of(wifi, "recover")) >= 1, timeout=4)
+        time.sleep(2.5)
+        assert not r.power.reboot_requested
+    finally:
+        r.stop()
+
+
+def test_no_restart_while_the_upload_page_is_open(tmp_path):
+    wifi = FakeWifi(ip="192.168.1.9", saved=True)
+    wifi.recovers = False
+    r = Rig(tmp_path, wifi=wifi, setup_auto=False)
+    try:
+        time.sleep(0.4)
+        r.app.start_transfer()
+        assert wait_for(lambda: r.state["mode"] == "transfer")
+        wifi.zombie = True
+        assert wait_for(lambda: len(calls_of(wifi, "recover")) == 1, timeout=4)    # the chip is still reloaded ...
+        time.sleep(2.5)
+        assert not r.power.reboot_requested                                       # ... but the TV does not restart under someone uploading
+    finally:
+        r.stop()
+
+
+# ---- the probe itself -------------------------------------------------------------------------------------------------------
+def test_the_router_probe_helpers():
+    from tubeless import wifi as w
+    assert w.default_gateway("default via 192.168.1.1 dev wlan0 proto dhcp src 192.168.1.124 metric 600\n") == "192.168.1.1"
+    assert w.default_gateway("default via 10.0.0.1 dev eth0\n", "wlan0") is None            # a route on another interface isn't ours
+    assert w.default_gateway("") is None and w.default_gateway("192.168.1.0/24 dev wlan0 scope link") is None
+    packet = w.icmp_packet(7)
+    assert packet[0] == 8 and packet[1] == 0 and packet[6:8] == b"\x00\x07"                # an echo request, sequence 7
+    total = sum((packet[i] << 8) + packet[i + 1] for i in range(0, len(packet) - len(packet) % 2, 2))
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    assert total == 0xFFFF                                                                   # the checksum is valid
+    assert w.ping("127.0.0.1", timeout=1, tries=1) in (True, None)                          # None where the system forbids it

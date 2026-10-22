@@ -142,8 +142,14 @@ class App:
         self.net_check_every = 20.0            # how often the Wi-Fi guard looks
         self.net_down_grace = 120.0            # the network must be gone this long before the Wi-Fi chip is reloaded
         self.net_recover_every = 600.0         # ... and it is not tried more often than this
+        self.net_reboot_after = 480.0          # if reloading the chip did not help, restart the TV this long after trying
+        self.net_min_uptime = 600.0            # ... but never in the first ten minutes after the app starts
+        self._started_at = time.time()
         self._net_down_since: Optional[float] = None
         self._net_last_recover = 0.0
+        self._net_tried_this_outage = False
+        self._net_seen_up = False              # the network has worked at some point since boot (a TV that never connected won't restart itself)
+        self._net_rebooted = False             # at most once per boot: no restart loops
         self.fast_death_seconds = 15.0         # a player that dies sooner than this after starting is failing, not finishing
         self.restart_backoff = 60.0            # after 3 such deaths in a row, wait this long between restarts
         self._fast_restarts = 0
@@ -1146,31 +1152,46 @@ class App:
                 log.exception("Wi-Fi guard error")
 
     def _wifi_guard(self) -> None:
-        """The Pi Zero 2 W's Wi-Fi chip can crash under load (streaming video did it) and then stays dead until the Pi restarts.
-        If a saved network has been gone for a couple of minutes, reload the chip's driver and re-seat its bus (root helper)."""
+        """The Pi Zero 2 W's Wi-Fi chip can fail under load and then stays dead until the Pi restarts. It dies in two ways: the
+        address disappears, or (as the log of a real failure showed) the chip stops answering while the interface KEEPS its address
+        and NetworkManager notices nothing. So 'down' means no address, or an address but the router can't be reached.
+        After a couple of minutes down: reload the chip's driver and re-seat its bus (root helper). If that doesn't bring it back,
+        restart the TV (once per boot, and only if the network had been working), because a restart always does."""
         if not self.wifi_available or self.mode not in ("play", "empty", "transfer"):
             self._net_down_since = None                          # not while the TV is hosting its own setup hotspot, etc.
             return
-        if self.wifi.connected_ip() is not None:
+        ip = self.wifi.connected_ip()
+        reach = self.wifi.reachable() if ip is not None else None
+        now = time.time()
+        if ip is not None and reach is not False:                # reach None = can't tell: assume fine
             if self._net_down_since is not None:
                 log.info("the network is back")
-            self._net_down_since = None
+            self._net_down_since, self._net_tried_this_outage = None, False
+            self._net_seen_up = True
             return
-        now = time.time()
+        why = "no address" if ip is None else "it has an address but the router does not answer"
         if self._net_down_since is None:
             self._net_down_since = now
             return
-        if now - self._net_down_since < self.net_down_grace or now - self._net_last_recover < self.net_recover_every:
+        gone = now - self._net_down_since
+        if self._net_tried_this_outage:
+            if (now - self._net_last_recover >= self.net_reboot_after and self._net_seen_up and not self._net_rebooted
+                    and self.mode in ("play", "empty") and now - self._started_at >= self.net_min_uptime):
+                self._net_rebooted = True
+                log.warning("the network is still gone %.0f s after reloading the chip: restarting the TV", now - self._net_last_recover)
+                self.save_progress_now()
+                self._show_busy("WI-FI LOST", ["Restarting the TV to bring it back.", "It will carry on where you were."])
+                self.power.reboot()
+                return
+            if now - self._net_last_recover < self.net_recover_every:
+                return
+            self._net_tried_this_outage = False                  # it has been a while: try the reload again (a TV out of range for hours)
+        if gone < self.net_down_grace or now - self._net_last_recover < self.net_recover_every or not self.wifi.has_saved():
             return
-        if not self.wifi.has_saved():
-            return                                                # nothing to reconnect to: not a crash, just no network set up
-        self._net_last_recover = now
-        log.warning("the network has been gone for %.0f s: reloading the Wi-Fi chip's driver", now - self._net_down_since)
-        ok, why = self.wifi.recover()
-        if ok:
-            log.info("the Wi-Fi chip is back")
-        else:
-            log.warning("could not bring the Wi-Fi chip back: %s", why)
+        self._net_last_recover, self._net_tried_this_outage = now, True
+        log.warning("the network has been gone for %.0f s (%s): reloading the Wi-Fi chip's driver", gone, why)
+        ok, why_not = self.wifi.recover()
+        log.info("the Wi-Fi chip is back" if ok else f"could not bring the Wi-Fi chip back: {why_not}")
 
     def _watch_for_network(self) -> None:
         """First boot with no Wi-Fi saved at all: after a grace period, start setup by itself. A TV that has a network

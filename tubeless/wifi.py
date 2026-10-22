@@ -12,6 +12,8 @@ This module is the app's side of that, plus a fake for tests and the simulator.
 from __future__ import annotations
 
 import json
+import socket
+import struct
 import logging
 import os
 import secrets
@@ -65,12 +67,59 @@ def parse_scan(text: str) -> List[Network]:
     return out
 
 
+def icmp_packet(sequence: int = 1, ident: int = 0, payload: bytes = b"tubeless") -> bytes:
+    """An ICMP echo request (type 8) with its checksum."""
+    header = struct.pack("!BBHHH", 8, 0, 0, ident, sequence)
+    data = header + payload
+    total = sum((data[i] << 8) + (data[i + 1] if i + 1 < len(data) else 0) for i in range(0, len(data), 2))
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return struct.pack("!BBHHH", 8, 0, (~total) & 0xFFFF, ident, sequence) + payload
+
+
+def ping(host: str, timeout: float = 2.0, tries: int = 2) -> Optional[bool]:
+    """Does `host` answer a ping? True/False, or None if this system won't let an ordinary user ping (then nobody should act on it).
+    Uses Linux's unprivileged ICMP sockets, so no root and no extra program."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
+    except (PermissionError, OSError, AttributeError):
+        return None
+    try:
+        sock.settimeout(timeout)
+        for n in range(tries):
+            try:
+                sock.sendto(icmp_packet(n + 1), (host, 0))
+                reply, _ = sock.recvfrom(1024)
+                if reply and len(reply) >= 1:
+                    return True
+            except socket.timeout:
+                continue
+            except OSError:
+                return False                      # no route / network unreachable
+        return False
+    finally:
+        sock.close()
+
+
+def default_gateway(route_output: str, interface: str = "wlan0") -> Optional[str]:
+    """The router's address from `ip -4 route show default`."""
+    for line in (route_output or "").splitlines():
+        parts = line.split()
+        if parts[:1] == ["default"] and "via" in parts and ("dev" not in parts or parts[parts.index("dev") + 1] == interface):
+            return parts[parts.index("via") + 1]
+    return None
+
+
 class Wifi:
     """What the app needs. connected_ip() and has_saved() are cheap; the rest take seconds."""
 
     available = False
 
     def connected_ip(self) -> Optional[str]: raise NotImplementedError
+    def reachable(self) -> Optional[bool]:
+        """Can we actually reach the router? (Having an address proves nothing: a crashed Wi-Fi chip keeps its address.)
+        None if we can't tell."""
+        return None
     def has_saved(self) -> bool: raise NotImplementedError
     def scan(self) -> List[Network]: raise NotImplementedError
     def hotspot_up(self, ssid: str, password: str) -> Tuple[bool, str]: raise NotImplementedError
@@ -103,6 +152,14 @@ class NetworkManagerWifi(Wifi):
             if "/" in part and part.count(".") == 3:
                 return part.split("/")[0]
         return None
+
+    def reachable(self) -> Optional[bool]:
+        try:
+            routes = subprocess.run(["ip", "-4", "route", "show", "default"], capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        gateway = default_gateway(routes, self.interface)
+        return ping(gateway) if gateway else None
 
     def has_saved(self) -> bool:
         try:
@@ -158,10 +215,17 @@ class FakeWifi(Wifi):
         self.accepts = accepts if accepts is not None else {"HomeWiFi": "correct horse"}      # ssid -> password
         self.delay = delay
         self.recovers, self.ip_after_recovery = True, "192.168.1.50"          # does a recover() bring the network back?
+        self.zombie = False                                                     # keeps its address but reaches nothing
         self.hotspot: Optional[Tuple[str, str]] = None
         self.calls: List[tuple] = []
 
     def connected_ip(self): return None if self.hotspot else self.ip
+
+    def reachable(self):
+        if self.zombie:                                       # the chip is dead but the interface still has its address
+            return False
+        return None if self.ip is None else True
+
     def has_saved(self): return self.saved
 
     def scan(self):
@@ -180,7 +244,7 @@ class FakeWifi(Wifi):
     def recover(self):
         self.calls.append(("recover",))
         if self.recovers:
-            self.ip = self.ip_after_recovery
+            self.ip, self.zombie = self.ip_after_recovery, False
         return self.recovers, "" if self.recovers else "the Wi-Fi chip did not come back"
 
     def connect(self, ssid, password):
