@@ -24,6 +24,7 @@ from . import qr as qrcodes
 from . import render
 from .config import Config, expand, set_config_value, user_config_path
 from .gestures import GestureRecognizer
+from . import health
 from .hardware import Hardware, apply_affine, solve_affine
 from .libindex import LibraryIndex
 from .library import Library, Plan, Playlists
@@ -137,6 +138,7 @@ class App:
                                marker=self.cfg.data / "updated.json")
         self._hold_player = False              # true while start_transfer/start_setup stop the player on purpose
         self.update_notice_seconds = 4.0       # how long 'update complete' stays over the video
+        self.health_every = 60.0               # a health note goes in the log this often (only on a Pi, where there is something to read)
         self.net_check_every = 20.0            # how often the Wi-Fi guard looks
         self.net_down_grace = 120.0            # the network must be gone this long before the Wi-Fi chip is reloaded
         self.net_recover_every = 600.0         # ... and it is not tried more often than this
@@ -239,7 +241,7 @@ class App:
             self.begin_calibration(first_run=True)            # a brand new install starts by calibrating touch
 
     def start_threads(self) -> None:
-        for target in (self._worker_loop, self._monitor_loop, self._tracker_loop, self._watch_for_network, self._wifi_guard_loop):
+        for target in (self._worker_loop, self._monitor_loop, self._tracker_loop, self._watch_for_network, self._wifi_guard_loop, self._health_loop):
             t = threading.Thread(target=target, daemon=True)
             t.start()
             self._threads.append(t)
@@ -1116,6 +1118,25 @@ class App:
 
     def online(self) -> bool:
         return not self.wifi_available or self.wifi.connected_ip() is not None
+
+    def _health_loop(self) -> None:
+        if not health.has_vcgencmd():
+            return                                               # not a Pi (a laptop running the simulator, the tests): nothing to read
+        last_ever = 0
+        while True:
+            try:
+                snap = health.snapshot()
+                line = health.format_line(snap)
+                ever = (snap.get("throttled") or 0) & 0xF0000
+                if health.is_worrying(snap) or ever != last_ever:       # a new problem is a warning; the routine note is just info
+                    log.warning(line)
+                else:
+                    log.info(line)
+                last_ever = ever
+            except Exception:
+                log.exception("health note failed")
+            if self.stop_event.wait(self.health_every):
+                return
 
     def _wifi_guard_loop(self) -> None:
         while not self.stop_event.wait(self.net_check_every):
