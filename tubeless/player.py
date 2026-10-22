@@ -16,7 +16,6 @@ time, pause, seeking, static bursts) so the app can run in the simulator and in 
 """
 from __future__ import annotations
 
-import functools
 import json
 import logging
 import os
@@ -90,16 +89,6 @@ class MpvIPC:
                         raise
 
 
-@functools.lru_cache(maxsize=None)
-def mpv_has_option(name: str) -> bool:
-    """Does the installed mpv know this option? (An option it doesn't know stops mpv from starting at all.) Asked once."""
-    try:
-        out = subprocess.run(["mpv", "--list-options"], capture_output=True, text=True, timeout=20).stdout
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return any(line.split()[:1] == ["--" + name] for line in out.splitlines())
-
-
 class MpvPlayer:
     def __init__(self, cfg: Config, hw: Hardware):
         self.cfg, self.hw = cfg, hw
@@ -130,17 +119,12 @@ class MpvPlayer:
                 # A Pi Zero 2 W has about 400 MB free in all. mpv's defaults buffer up to 150 MB of a network stream (and as much
                 # again behind the playhead), which is enough to starve the whole TV. A few seconds of buffer is plenty here.
                 "--demuxer-max-bytes=24MiB", "--demuxer-max-back-bytes=4MiB", "--cache-secs=20",
-            ] + self._prefetch_options() + self._youtube_options(), stdout=out, stderr=subprocess.STDOUT)
+            ] + self._youtube_options(), stdout=out, stderr=subprocess.STDOUT)
         finally:
             if out is not subprocess.DEVNULL:
                 out.close()
         self.started_at = time.time()
         log.info("started mpv PID %s", self.proc.pid)
-
-    def _prefetch_options(self) -> list:
-        """Look ahead: open the next playlist entry while the current one plays. On a YouTube channel (no static clip between
-        videos) that is the next video, resolved and opened in the background."""
-        return ["--prefetch-playlist=yes"] if mpv_has_option("prefetch-playlist") else []
 
     def _youtube_options(self) -> list:
         """So a YouTube link in a playlist is played (as 480p H.264) by the yt-dlp the user installed."""
