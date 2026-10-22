@@ -23,6 +23,28 @@ def test_set_name_creates_the_config_and_keeps_other_settings(tmp_path, capsys):
     assert "sudo systemctl restart tubeless" in capsys.readouterr().out
 
 
+def test_greeting_is_validated_tidied_and_blank_puts_the_placeholder_back(tmp_path):
+    from tubeless.config import DEFAULT_GREETING, MAX_GREETING_LENGTH, set_config_value
+    path = tmp_path / "c.json"
+    assert set_config_value(path, "boot_greeting", "  Wake up,   Homer  ") == "Wake up, Homer"
+    assert Config.load(str(path)).boot_greeting == "Wake up, Homer"
+    with pytest.raises(ValueError):
+        set_config_value(path, "boot_greeting", "x" * (MAX_GREETING_LENGTH + 1))
+    assert set_config_value(path, "boot_greeting", "   ") == DEFAULT_GREETING
+    assert "boot_greeting" not in json.loads(path.read_text()) and Config.load(str(path)).boot_greeting == DEFAULT_GREETING
+
+
+def test_the_longest_greeting_fits_on_the_boot_screen():
+    from PIL import ImageDraw, Image
+    from tubeless import bootscreen, fonts
+    from tubeless.config import MAX_GREETING_LENGTH
+    from tubeless.hardware import Hardware
+    hw = Hardware()
+    d = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    px0, _, px1, _ = hw.safe_rect
+    assert d.textlength("> " + "W" * MAX_GREETING_LENGTH + "_", font=fonts.load(fonts.MONO, 16)) <= (px1 - 24) - (px0 + 24)
+
+
 def test_set_creates_a_missing_file(tmp_path):
     path = tmp_path / "new" / "config.json"
     assert run("config", "--config", str(path), "set", "name", "Den") == 0

@@ -14,7 +14,7 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 from PIL import Image, ImageDraw
 
-from . import fonts
+from . import fonts, themes
 from .hardware import Hardware
 
 SS = 2                         # supersampling for smooth edges
@@ -24,16 +24,26 @@ ROWS_Y0 = 78
 PANEL_RECT = (22, 12, 640 - 22, 480 - 12)         # in the unscaled drawing space
 ROW_X0, ROW_X1 = 36, 640 - 50
 OUTSIDE = -1                  # hit_test(): the touch landed outside the menu panel
+BUTTON_SIZE, BUTTON_GAP, BUTTON_Y0 = 42, 10, 20      # the two icon buttons at the top right of the menu panel
+BUTTON_X1 = PANEL_RECT[2] - 24
+HEADER_BUTTONS = ("upload", "power")                 # left to right
 
-ACCENT   = (254, 217, 15, 255)
-PANEL_BG = (14, 18, 30, 232)
-TEXT     = (240, 242, 248, 255)
-DIM      = (150, 158, 178, 255)
-DARK     = (24, 26, 36, 255)
+# The colours come from the active theme (themes.py); the boot screen keeps its own.
 
-MATRIX     = (0, 255, 70, 255)
-MATRIX_MID = (0, 190, 55, 255)
-MATRIX_DIM = (0, 120, 38, 255)
+
+def _rgba(c, alpha: int = 255) -> Tuple[int, int, int, int]:
+    return (c[0], c[1], c[2], alpha)
+
+
+def _sc():
+    """The active theme's colours for the full-screen info screens, as RGBA:
+    (background, bright, mid, faint, border, text on bright, strong)."""
+    return tuple(_rgba(c) for c in themes.active().screen_colours())
+
+
+def _frame() -> int:
+    """Border width of the info screens' frame: thick in the neobrutalist style."""
+    return 3 if themes.active().brutal else 1
 
 
 def _s(v: float) -> int:
@@ -157,6 +167,25 @@ def clamp_top(top: int, total: int) -> int:
     return max(0, min(top, max(0, total - VISIBLE_ROWS)))
 
 
+def button_rect(name: str) -> Tuple[int, int, int, int]:
+    """Where a header button sits in the unscaled drawing space."""
+    i = len(HEADER_BUTTONS) - 1 - HEADER_BUTTONS.index(name)         # counted from the right
+    x1 = BUTTON_X1 - i * (BUTTON_SIZE + BUTTON_GAP)
+    return (x1 - BUTTON_SIZE, BUTTON_Y0, x1, BUTTON_Y0 + BUTTON_SIZE)
+
+
+def header_hit(vx: float, vy: float, hw: Hardware) -> Optional[str]:
+    """The header button under a touch (landscape view coordinates), or None."""
+    cx, cy = hw.bezel_center
+    dx = hw.view_w / 2 + (vx - cx) / hw.bezel_scale
+    dy = hw.view_h / 2 + (vy - cy) / hw.bezel_scale
+    for name in HEADER_BUTTONS:
+        x0, y0, x1, y1 = button_rect(name)
+        if x0 - 5 <= dx <= x1 + 5 and y0 - 5 <= dy <= y1 + 5:
+            return name
+    return None
+
+
 def hit_test(vx: float, vy: float, top: int, total: int, hw: Hardware) -> Optional[int]:
     """
     Map a touch (landscape view coordinates) to a menu row.
@@ -179,26 +208,44 @@ def hit_test(vx: float, vy: float, top: int, total: int, hw: Hardware) -> Option
 
 def render_menu_landscape(items: Sequence, selected: int, hw: Hardware, title: str = "Tubeless",
                           subtitle: str = "", top: Optional[int] = None,
-                          footer: str = "TAP  choose        SWIPE  scroll        HOLD  close") -> Image.Image:
+                          footer: str = "TAP  choose        SWIPE  scroll        HOLD  close",
+                          armed: Sequence[str] = ()) -> Image.Image:
     """
     items: objects with .icon .label and optional .value / .current.
-    Returns an RGBA image, hw.view_w x hw.view_h (landscape), transparent outside the menu.
+    armed: names of header buttons waiting for their second tap (drawn filled).
+    The TV name, a small gap, then the channel name sit at the left; the two icon buttons at the right.
+    Colours and shapes come from the active theme.
     """
+    t = themes.active()
+    accent, ink, text, dim = _rgba(t.accent), _rgba(t.outline_colour), _rgba(t.text), _rgba(t.dim)
+    panel, on_accent, title_col = _rgba(t.panel, t.panel_alpha), _rgba(t.on_accent), _rgba(t.accent_text)
     W, H = hw.view_w, hw.view_h
-    img = Image.new("RGBA", (_s(W), _s(H)), ACCENT[:3] + (0,))   # yellow-tinted so edges don't go dark when shrunk
+    img = Image.new("RGBA", (_s(W), _s(H)), accent[:3] + (0,))    # accent-tinted so edges don't go dark when shrunk
     d = ImageDraw.Draw(img)
 
-    _rrect(d, (_s(PANEL_RECT[0]), _s(PANEL_RECT[1]), _s(PANEL_RECT[2]), _s(PANEL_RECT[3])),
-           _s(20), PANEL_BG, outline=ACCENT, width=_s(2))
+    px0, py0, px1, py1 = PANEL_RECT
+    if t.shadow:
+        _rrect(d, (_s(px0 + t.shadow), _s(py0 + t.shadow), _s(px1 + t.shadow), _s(py1 + t.shadow)), _s(t.panel_radius), ink)
+    _rrect(d, (_s(px0), _s(py0), _s(px1), _s(py1)), _s(t.panel_radius), panel, outline=ink, width=_s(t.outline))
 
     title_font, sub_font = fonts.load(fonts.SANS_BOLD, 28 * SS), fonts.load(fonts.SANS, 20 * SS)
-    room = _s(W - 46) - _s(46)                                   # between the two text margins
+    room = _s(button_rect(HEADER_BUTTONS[0])[0] - 16) - _s(46)    # from the left margin to the first button
+    gap = _s(14)
     if subtitle:
-        subtitle = fit_text(d, subtitle, sub_font, room * 0.45)
-        room -= d.textlength(subtitle, font=sub_font) + _s(20)
-        d.text((_s(W - 46), _s(30)), subtitle, font=sub_font, fill=DIM, anchor="ra")
-    d.text((_s(46), _s(24)), fit_text(d, title, title_font, room), font=title_font, fill=ACCENT)
-    d.line([(_s(40), _s(68)), (_s(W - 40), _s(68))], fill=(60, 68, 92, 255), width=_s(1))
+        subtitle = fit_text(d, subtitle, sub_font, room * 0.4)
+        room -= d.textlength(subtitle, font=sub_font) + gap
+    title = fit_text(d, title, title_font, room)
+    d.text((_s(46), _s(52)), title, font=title_font, fill=title_col, anchor="ls")
+    if subtitle:
+        d.text((_s(46) + d.textlength(title, font=title_font) + gap, _s(52)), subtitle, font=sub_font, fill=dim, anchor="ls")
+    btn_w = 3 if t.brutal else 2
+    for name in HEADER_BUTTONS:
+        x0, y0, x1, y1 = button_rect(name)
+        on = name in armed
+        _rrect(d, (_s(x0), _s(y0), _s(x1), _s(y1)), _s(0 if t.brutal else 10), accent if on else panel, outline=ink, width=_s(btn_w))
+        _icon(img, d, name, (x0 + x1) / 2, (y0 + y1) / 2, on_accent if on else (ink if t.brutal else title_col))
+    rule = ink if t.brutal else _rgba(t.line)
+    d.line([(_s(40), _s(68)), (_s(W - 40), _s(68))], fill=rule, width=_s(3 if t.brutal else 1))
 
     total = len(items)
     if top is None:
@@ -213,18 +260,20 @@ def render_menu_landscape(items: Sequence, selected: int, hw: Hardware, title: s
         item = items[i]
         sel = i == selected
         x0, x1 = ROW_X0, ROW_X1
-        if sel:
-            _rrect(d, (_s(x0), _s(y), _s(x1), _s(y + ROW_H)), _s(12), ACCENT)
-        fg = DARK if sel else TEXT
+        if t.row_outline:
+            _rrect(d, (_s(x0), _s(y), _s(x1), _s(y + ROW_H)), _s(t.radius), accent if sel else panel, outline=ink, width=_s(t.row_outline))
+        elif sel:
+            _rrect(d, (_s(x0), _s(y), _s(x1), _s(y + ROW_H)), _s(t.radius), accent)
+        fg = on_accent if sel else text
         _icon(img, d, getattr(item, "icon", "tv"), x0 + 32, y + ROW_H / 2, fg)
         d.text((_s(x0 + 62), _s(y + ROW_H / 2)), item.label, font=label_font, fill=fg, anchor="lm")
         value = getattr(item, "value", None)
         if value:
             d.text((_s(x1 - 18), _s(y + ROW_H / 2)), str(value), font=value_font,
-                   fill=(DARK if sel else ACCENT), anchor="rm")
+                   fill=(on_accent if sel else title_col), anchor="rm")
         elif getattr(item, "current", False):
             cx, cy = x1 - 26, y + ROW_H / 2
-            d.ellipse((_s(cx - 7), _s(cy - 7), _s(cx + 7), _s(cy + 7)), fill=(DARK if sel else ACCENT))
+            d.ellipse((_s(cx - 7), _s(cy - 7), _s(cx + 7), _s(cy + 7)), fill=(on_accent if sel else title_col))
         y += ROW_H + ROW_GAP
 
     if total > VISIBLE_ROWS:                                  # scroll bar
@@ -233,15 +282,15 @@ def render_menu_landscape(items: Sequence, selected: int, hw: Hardware, title: s
         th = (track_bot - track_top) * VISIBLE_ROWS / total
         ty = track_top + (track_bot - track_top - th) * start / (total - VISIBLE_ROWS)
         sx = W - 38
-        _rrect(d, (_s(sx), _s(track_top), _s(sx + 5), _s(track_bot)), _s(3), (40, 46, 66, 255))
-        _rrect(d, (_s(sx), _s(ty), _s(sx + 5), _s(ty + th)), _s(3), ACCENT)
+        _rrect(d, (_s(sx), _s(track_top), _s(sx + 5), _s(track_bot)), _s(3), _rgba(themes.mix(t.panel, t.text, 0.14)))
+        _rrect(d, (_s(sx), _s(ty), _s(sx + 5), _s(ty + th)), _s(3), title_col)
 
-    d.text((_s(W / 2), _s(H - 32)), footer, font=fonts.load(fonts.SANS, 15 * SS), fill=DIM, anchor="mm")
+    d.text((_s(W / 2), _s(H - 32)), footer, font=fonts.load(fonts.SANS, 15 * SS), fill=dim, anchor="mm")
 
     # Shrink (from the supersampled drawing, so text stays crisp) and centre on the bezel's visible opening.
     w, h = int(round(W * hw.bezel_scale)), int(round(H * hw.bezel_scale))
     small = img.resize((w, h), Image.BOX)
-    out = Image.new("RGBA", (W, H), ACCENT[:3] + (0,))
+    out = Image.new("RGBA", (W, H), accent[:3] + (0,))
     out.paste(small, (int(round(hw.bezel_center[0] - w / 2)), int(round(hw.bezel_center[1] - h / 2))))
     return out
 
@@ -250,19 +299,20 @@ def render_menu_landscape(items: Sequence, selected: int, hw: Hardware, title: s
 #  Full-screen screens (calibration, shutdown ...) in the boot screen's Matrix style
 # ─────────────────────────────────────────────
 def _blank(hw: Hardware):
-    img = Image.new("RGBA", (hw.view_w, hw.view_h), (0, 0, 0, 255))
+    img = Image.new("RGBA", (hw.view_w, hw.view_h), _sc()[0])
     return img, ImageDraw.Draw(img)
 
 
 def render_message(hw: Hardware, title: str, lines: Sequence[str] = (), name: str = "") -> Image.Image:
+    BG, BR, MID, FAINT, BORDER, ONBR, STRONG = _sc()
     img, d = _blank(hw)
     cx, cy = hw.bezel_center
     if name:
-        d.text((cx, 70), name.upper(), font=fonts.load(fonts.MONO_BOLD, 22), fill=MATRIX_DIM, anchor="mm")
-    d.text((cx, cy - 20), title, font=fonts.load(fonts.MONO_BOLD, 30), fill=MATRIX, anchor="mm")
+        d.text((cx, 70), name.upper(), font=fonts.load(fonts.MONO_BOLD, 22), fill=FAINT, anchor="mm")
+    d.text((cx, cy - 20), title, font=fonts.load(fonts.MONO_BOLD, 30), fill=BR, anchor="mm")
     y = cy + 28
     for line in lines:
-        d.text((cx, y), line, font=fonts.load(fonts.MONO, 18), fill=MATRIX_MID, anchor="mm")
+        d.text((cx, y), line, font=fonts.load(fonts.MONO, 18), fill=MID, anchor="mm")
         y += 26
     return img
 
@@ -322,18 +372,19 @@ def calibration_targets(hw: Hardware):
 
 def render_calibration(hw: Hardware, step: int, total: int, target: Tuple[float, float],
                        message: str = "", name: str = "") -> Image.Image:
+    BG, BR, MID, FAINT, BORDER, ONBR, STRONG = _sc()
     img, d = _blank(hw)
     tx, ty = target
-    for r, col in ((30, MATRIX_DIM), (18, MATRIX_MID)):
+    for r, col in ((30, FAINT), (18, MID)):
         d.ellipse((tx - r, ty - r, tx + r, ty + r), outline=col, width=2)
-    d.line([(tx - 40, ty), (tx + 40, ty)], fill=MATRIX, width=2)
-    d.line([(tx, ty - 40), (tx, ty + 40)], fill=MATRIX, width=2)
-    d.ellipse((tx - 3, ty - 3, tx + 3, ty + 3), fill=MATRIX)
+    d.line([(tx - 40, ty), (tx + 40, ty)], fill=BR, width=2)
+    d.line([(tx, ty - 40), (tx, ty + 40)], fill=BR, width=2)
+    d.ellipse((tx - 3, ty - 3, tx + 3, ty + 3), fill=BR)
     cx, cy = hw.bezel_center
     title_y = cy - 12 if ty > cy + 30 or ty < cy - 30 else cy + 62
-    d.text((cx, title_y - 16), "CALIBRATE TOUCH", font=fonts.load(fonts.MONO_BOLD, 22), fill=MATRIX, anchor="mm")
-    d.text((cx, title_y + 12), message or "Tap the crosshair", font=fonts.load(fonts.MONO, 17), fill=MATRIX_MID, anchor="mm")
-    d.text((cx, title_y + 38), "%d of %d" % (step + 1, total), font=fonts.load(fonts.MONO, 15), fill=MATRIX_DIM, anchor="mm")
+    d.text((cx, title_y - 16), "CALIBRATE TOUCH", font=fonts.load(fonts.MONO_BOLD, 22), fill=BR, anchor="mm")
+    d.text((cx, title_y + 12), message or "Tap the crosshair", font=fonts.load(fonts.MONO, 17), fill=MID, anchor="mm")
+    d.text((cx, title_y + 38), "%d of %d" % (step + 1, total), font=fonts.load(fonts.MONO, 15), fill=FAINT, anchor="mm")
     return img
 
 
@@ -364,7 +415,6 @@ def from_panel_bgra(raw: bytes, w: int, h: int, hw: Hardware) -> np.ndarray:
 # ─────────────────────────────────────────────
 #  Full-screen screens drawn straight to the framebuffer (no player running): "no videos" and upload mode
 # ─────────────────────────────────────────────
-MATRIX_PAPER = (0, 0, 0)
 
 # the two buttons on the empty screen, in the landscape view's coordinates
 EMPTY_BUTTONS = {"upload": (84, 332, 322, 392), "recheck": (338, 332, 556, 392)}
@@ -379,19 +429,20 @@ def empty_button_at(vx: float, vy: float) -> str:
 
 
 def render_empty(hw: Hardware, name: str, folder: str, notice: str = "") -> Image.Image:
+    BG, BR, MID, FAINT, BORDER, ONBR, STRONG = _sc()
     img, d = _blank(hw)
     x0, y0, x1, y1 = hw.safe_rect
     left = x0 + 24
-    d.rectangle(hw.safe_rect, outline=(0, 55, 20, 255), width=1)
-    d.text((left, y0 + 16), fit_text(d, name.upper(), fonts.load(fonts.MONO_BOLD, 22), 300), font=fonts.load(fonts.MONO_BOLD, 22), fill=MATRIX_DIM)
-    d.text((left, y0 + 52), "NO VIDEOS YET", font=fonts.load(fonts.MONO_BOLD, 38), fill=MATRIX)
+    d.rectangle(hw.safe_rect, outline=BORDER, width=_frame())
+    d.text((left, y0 + 16), fit_text(d, name.upper(), fonts.load(fonts.MONO_BOLD, 22), 300), font=fonts.load(fonts.MONO_BOLD, 22), fill=FAINT)
+    d.text((left, y0 + 52), "NO VIDEOS YET", font=fonts.load(fonts.MONO_BOLD, 38), fill=BR)
     lines = [
-        ("This TV plays the videos in this folder,", MATRIX_MID),
-        ("one sub-folder for each channel:", MATRIX_MID),
-        ("    " + folder + "/<channel>/", MATRIX),
-        ("", MATRIX_MID),
-        ("Copy them over the network (SFTP/scp),", MATRIX_MID),
-        ("or add them from your phone or laptop.", MATRIX_MID),
+        ("This TV plays the videos in this folder,", MID),
+        ("one sub-folder for each channel:", MID),
+        ("    " + folder + "/<channel>/", BR),
+        ("", MID),
+        ("Copy them over the network (SFTP/scp),", MID),
+        ("or add them from your phone or laptop.", MID),
     ]
     y = y0 + 112
     for text, colour in lines:
@@ -400,10 +451,10 @@ def render_empty(hw: Hardware, name: str, folder: str, notice: str = "") -> Imag
     for key, label in (("upload", "UPLOAD PAGE"), ("recheck", "CHECK AGAIN")):
         bx0, by0, bx1, by1 = EMPTY_BUTTONS[key]
         solid = key == "upload"
-        d.rectangle((bx0, by0, bx1, by1), fill=MATRIX if solid else (0, 0, 0, 255), outline=MATRIX, width=2)
+        d.rectangle((bx0, by0, bx1, by1), fill=BR if solid else BG, outline=BR, width=2)
         d.text(((bx0 + bx1) // 2, (by0 + by1) // 2), label, font=fonts.load(fonts.MONO_BOLD, 20),
-               fill=(0, 20, 6, 255) if solid else MATRIX, anchor="mm")
-    d.text((x0 + 24, y1 - 22), notice or "Tap a button.", font=fonts.load(fonts.MONO, 14), fill=MATRIX_DIM)
+               fill=ONBR if solid else BR, anchor="mm")
+    d.text((x0 + 24, y1 - 22), notice or "Tap a button.", font=fonts.load(fonts.MONO, 14), fill=FAINT)
     return img
 
 
@@ -423,12 +474,13 @@ def _draw_qr(d, qr: Sequence[Sequence[bool]], left: int, top: int, size: int) ->
 
 def render_transfer(hw: Hardware, name: str, urls: Sequence[str], pin: str, qr: Optional[Sequence[Sequence[bool]]],
                     status: Sequence[str], progress: Optional[float] = None) -> Image.Image:
+    BG, BR, MID, FAINT, BORDER, ONBR, STRONG = _sc()
     img, d = _blank(hw)
     x0, y0, x1, y1 = hw.safe_rect
     left = x0 + 24
-    d.rectangle(hw.safe_rect, outline=(0, 55, 20, 255), width=1)
-    d.text((left, y0 + 14), fit_text(d, name.upper(), fonts.load(fonts.MONO_BOLD, 18), 300), font=fonts.load(fonts.MONO_BOLD, 18), fill=MATRIX_DIM)
-    d.text((left, y0 + 40), "UPLOAD PAGE", font=fonts.load(fonts.MONO_BOLD, 32), fill=MATRIX)
+    d.rectangle(hw.safe_rect, outline=BORDER, width=_frame())
+    d.text((left, y0 + 14), fit_text(d, name.upper(), fonts.load(fonts.MONO_BOLD, 18), 300), font=fonts.load(fonts.MONO_BOLD, 18), fill=FAINT)
+    d.text((left, y0 + 40), "UPLOAD PAGE", font=fonts.load(fonts.MONO_BOLD, 32), fill=BR)
 
     top = y0 + 92
     size = 176
@@ -438,38 +490,39 @@ def render_transfer(hw: Hardware, name: str, urls: Sequence[str], pin: str, qr: 
     else:
         text_x = left
     y = top
-    d.text((text_x, y), "Scan, or open on your phone:" if qr else "Open on your phone or laptop:", font=fonts.load(fonts.MONO, 15), fill=MATRIX_MID)
+    d.text((text_x, y), "Scan, or open on your phone:" if qr else "Open on your phone or laptop:", font=fonts.load(fonts.MONO, 15), fill=MID)
     y += 24
     for url in urls:
-        d.text((text_x, y), fit_text(d, url, fonts.load(fonts.MONO_BOLD, 16), x1 - 12 - text_x), font=fonts.load(fonts.MONO_BOLD, 16), fill=MATRIX)
+        d.text((text_x, y), fit_text(d, url, fonts.load(fonts.MONO_BOLD, 16), x1 - 12 - text_x), font=fonts.load(fonts.MONO_BOLD, 16), fill=BR)
         y += 24
     y += 12
-    d.text((text_x, y), "PIN", font=fonts.load(fonts.MONO, 15), fill=MATRIX_MID)
-    d.text((text_x + 48, y - 14), pin, font=fonts.load(fonts.MONO_BOLD, 46), fill=(220, 255, 230, 255))
+    d.text((text_x, y), "PIN", font=fonts.load(fonts.MONO, 15), fill=MID)
+    d.text((text_x + 48, y - 14), pin, font=fonts.load(fonts.MONO_BOLD, 46), fill=STRONG)
 
     sy = max(top + (side if qr else 0) + 14, y + 52)
     for line in status[:3]:
-        d.text((left, sy), fit_text(d, line, fonts.load(fonts.MONO, 16), x1 - 24 - left), font=fonts.load(fonts.MONO, 16), fill=MATRIX_MID)
+        d.text((left, sy), fit_text(d, line, fonts.load(fonts.MONO, 16), x1 - 24 - left), font=fonts.load(fonts.MONO, 16), fill=MID)
         sy += 22
     if progress is not None:
         by0, by1 = sy + 4, sy + 18
-        d.rectangle((left, by0, x1 - 24, by1), outline=MATRIX_DIM, width=1)
+        d.rectangle((left, by0, x1 - 24, by1), outline=FAINT, width=1)
         w = int((x1 - 24 - left - 4) * max(0.0, min(1.0, progress)))
         if w > 0:
-            d.rectangle((left + 2, by0 + 2, left + 2 + w, by1 - 2), fill=MATRIX)
-    d.text((x0 + 24, y1 - 22), "HOLD the screen to finish and go back to the TV", font=fonts.load(fonts.MONO, 14), fill=MATRIX_DIM)
+            d.rectangle((left + 2, by0 + 2, left + 2 + w, by1 - 2), fill=BR)
+    d.text((x0 + 24, y1 - 22), "HOLD the screen to finish and go back to the TV", font=fonts.load(fonts.MONO, 14), fill=FAINT)
     return img
 
 
 def render_setup(hw: Hardware, name: str, ssid: str, password: str, qr: Optional[Sequence[Sequence[bool]]],
                  address: str, status: Sequence[str]) -> Image.Image:
+    BG, BR, MID, FAINT, BORDER, ONBR, STRONG = _sc()
     """Wi-Fi setup: join the TV's hotspot, then pick your own network on the page that opens."""
     img, d = _blank(hw)
     x0, y0, x1, y1 = hw.safe_rect
     left = x0 + 24
-    d.rectangle(hw.safe_rect, outline=(0, 55, 20, 255), width=1)
-    d.text((left, y0 + 14), fit_text(d, name.upper(), fonts.load(fonts.MONO_BOLD, 18), 300), font=fonts.load(fonts.MONO_BOLD, 18), fill=MATRIX_DIM)
-    d.text((left, y0 + 40), "WI-FI SETUP", font=fonts.load(fonts.MONO_BOLD, 32), fill=MATRIX)
+    d.rectangle(hw.safe_rect, outline=BORDER, width=_frame())
+    d.text((left, y0 + 14), fit_text(d, name.upper(), fonts.load(fonts.MONO_BOLD, 18), 300), font=fonts.load(fonts.MONO_BOLD, 18), fill=FAINT)
+    d.text((left, y0 + 40), "WI-FI SETUP", font=fonts.load(fonts.MONO_BOLD, 32), fill=BR)
     top, size = y0 + 92, 168
     if qr:
         side = _draw_qr(d, qr, left, top, size)
@@ -478,21 +531,21 @@ def render_setup(hw: Hardware, name: str, ssid: str, password: str, qr: Optional
         side, text_x = 0, left
     mono, bold = fonts.load(fonts.MONO, 15), fonts.load(fonts.MONO_BOLD, 17)
     y = top
-    d.text((text_x, y), "1. Join this Wi-Fi" + (" (scan me)" if qr else ""), font=mono, fill=MATRIX_MID)
+    d.text((text_x, y), "1. Join this Wi-Fi" + (" (scan me)" if qr else ""), font=mono, fill=MID)
     y += 22
-    d.text((text_x, y), fit_text(d, ssid, bold, x1 - 12 - text_x), font=bold, fill=MATRIX)
+    d.text((text_x, y), fit_text(d, ssid, bold, x1 - 12 - text_x), font=bold, fill=BR)
     y += 24
-    d.text((text_x, y), "password", font=mono, fill=MATRIX_DIM)
-    d.text((text_x + 84, y - 2), password, font=fonts.load(fonts.MONO_BOLD, 22), fill=(220, 255, 230, 255))
+    d.text((text_x, y), "password", font=mono, fill=FAINT)
+    d.text((text_x + 84, y - 2), password, font=fonts.load(fonts.MONO_BOLD, 22), fill=STRONG)
     y += 38
-    d.text((text_x, y), "2. Pick your network on the", font=mono, fill=MATRIX_MID)
+    d.text((text_x, y), "2. Pick your network on the", font=mono, fill=MID)
     y += 20
-    d.text((text_x, y), "page that opens, or visit", font=mono, fill=MATRIX_MID)
+    d.text((text_x, y), "page that opens, or visit", font=mono, fill=MID)
     y += 22
-    d.text((text_x, y), address, font=bold, fill=MATRIX)
+    d.text((text_x, y), address, font=bold, fill=BR)
     sy = max(top + side + 14, y + 34)
     for line in status[:3]:
-        d.text((left, sy), fit_text(d, line, fonts.load(fonts.MONO, 16), x1 - 24 - left), font=fonts.load(fonts.MONO, 16), fill=MATRIX_MID)
+        d.text((left, sy), fit_text(d, line, fonts.load(fonts.MONO, 16), x1 - 24 - left), font=fonts.load(fonts.MONO, 16), fill=MID)
         sy += 22
-    d.text((x0 + 24, y1 - 22), "HOLD the screen to cancel", font=fonts.load(fonts.MONO, 14), fill=MATRIX_DIM)
+    d.text((x0 + 24, y1 - 22), "HOLD the screen to cancel", font=fonts.load(fonts.MONO, 14), fill=FAINT)
     return img

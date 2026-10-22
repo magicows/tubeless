@@ -2,6 +2,7 @@
 The menu as data: what rows exist on each page, and what selecting one means.
 Pure logic; drawing is in render.py and doing is in app.py.
 
+    (Both pages also show two icon buttons in the header, shut down and upload mode, each needing two taps; see app.py.)
     main:      Pause/Play, Next video, Previous video, Brightness, Settings >, then the channels
     settings:  < Back, Shuffle, Reshuffle channel, Sleep timer, Auto-dim, Calibrate touch, Upload videos, Wi-Fi setup, Shut down
 """
@@ -33,6 +34,7 @@ class MenuContext:
     sleep_timer_min: int = 0
     auto_dim_min: int = 0
     confirm_shutdown: bool = False
+    confirm_transfer: bool = False            # the header's upload button has had its first tap
     wifi_setup: bool = False                  # offered only where the OS can do it (NetworkManager)
 
 

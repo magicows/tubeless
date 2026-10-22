@@ -158,7 +158,6 @@ def system(tmp_path, monkeypatch):
 
 def test_a_full_install_on_a_fresh_system(system):
     ctx, runner = system
-    ctx.greeting = "Wake up, Homer..."
     assert installer.install_all(ctx) == 0
     out = "\n".join(runner.lines)
     assert ctx.reboot_needed and "Reboot now" in out
@@ -185,7 +184,7 @@ def test_a_full_install_on_a_fresh_system(system):
     assert not wifi_conf.exists() or "wifi.powersave = 2" in wifi_conf.read_text()          # only where NetworkManager exists
     assert ("systemctl", "daemon-reexec") in runner.commands and ("systemctl", "restart", "systemd-journald") in runner.commands
     assert '"name": "Den"' in (ctx.home / ".config" / "tubeless" / "config.json").read_text()
-    assert '"boot_greeting": "Wake up, Homer..."' in (ctx.home / ".config" / "tubeless" / "config.json").read_text()
+    assert "boot_greeting" not in (ctx.home / ".config" / "tubeless" / "config.json").read_text()      # the placeholder, until the upload page sets one
     assert (ctx.home / "videos").is_dir()
 
     # units and the narrow sudoers rule
@@ -314,16 +313,13 @@ def test_with_youtube_leaves_an_existing_ytdlp_alone(system):
 
 
 
-def test_default_config_only_mentions_the_greeting_when_given():
+def test_default_config_is_just_the_name():
     assert installer.default_config("Den") == '{\n  "name": "Den"\n}\n'
-    assert '"boot_greeting": "Hi"' in installer.default_config("Den", "Hi")
 
 
-def test_greeting_flag_is_accepted_by_the_installer_command_line(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(installer, "cmd_all", lambda args: (seen.update(vars(args)), 0)[1])   # main() builds its parser on each call
-    assert installer.main(["all", "--name", "Den", "--greeting", "Wake up, Homer...", "--dry-run"]) == 0
-    assert seen["greeting"] == "Wake up, Homer..." and seen["name"] == "Den"
+def test_the_installer_no_longer_takes_a_greeting(capsys):
+    with pytest.raises(SystemExit):
+        installer.main(["all", "--name", "Den", "--greeting", "Hi", "--dry-run"])
 
 
 def test_runner_passes_output_and_exit_status_through(capsys):

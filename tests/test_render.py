@@ -49,6 +49,33 @@ def test_hit_test_outside_header_footer():
     assert render.hit_test(*to_view(300, 70), 0, 13, HW) is None
 
 
+def test_header_buttons_are_hit_and_do_not_overlap_the_rows_or_each_other():
+    rects = {n: render.button_rect(n) for n in render.HEADER_BUTTONS}
+    assert rects["upload"][2] < rects["power"][0]                                        # left to right, a gap between
+    for name, (x0, y0, x1, y1) in rects.items():
+        assert render.header_hit(*to_view((x0 + x1) / 2, (y0 + y1) / 2), HW) == name
+        assert y1 < render.ROWS_Y0 - 4 and x1 <= render.PANEL_RECT[2]
+        assert render.hit_test(*to_view((x0 + x1) / 2, (y0 + y1) / 2), 0, 13, HW) is None   # not a row
+    assert render.header_hit(*to_view(300, 150), HW) is None                             # a row is not a button
+    assert render.header_hit(*to_view(60, 40), HW) is None                               # nor is the title
+
+
+def test_title_then_folder_then_buttons_in_the_header():
+    from PIL import Image
+    plain = render.render_menu_landscape(MenuModel().items(CTX), 0, HW, title="Simpsons", subtitle="Cartoons")
+    armed = render.render_menu_landscape(MenuModel().items(CTX), 0, HW, title="Simpsons", subtitle="Cartoons", armed=("power",))
+    assert plain.tobytes() != armed.tobytes()                                            # an armed button looks different
+    x0, y0, x1, y1 = render.button_rect("power")
+    a = np.asarray(plain.convert("RGBA"))
+    cx, cy = HW.bezel_center
+    px, py = int(cx + ((x0 + x1) / 2 - 320) * HW.bezel_scale), int(cy + ((y0 + y1) / 2 - 240) * HW.bezel_scale)
+    assert a[py, px, 3] > 0                                                              # the button is drawn there
+    # nothing but the buttons is drawn right of the folder name: the right edge of the header (left of the first button) holds no text
+    left_of_buttons = int(cx + (render.button_rect("upload")[0] - 12 - 320) * HW.bezel_scale)
+    title_band = np.asarray(plain.convert("RGB"))[int(cy + (40 - 240) * HW.bezel_scale), :, :]
+    assert title_band[left_of_buttons - 3:left_of_buttons].std() < 40                    # flat panel colour, no text running under a button
+
+
 def test_menu_is_inside_the_bezel_opening():
     img = render.render_menu_landscape(MenuModel().items(CTX), 0, HW)
     x0, y0, x1, y1 = img.getchannel("A").getbbox()

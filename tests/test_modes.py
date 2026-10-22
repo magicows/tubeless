@@ -173,3 +173,16 @@ def test_boot_screen_steps_aside_when_there_are_no_videos(tmp_path, capsys, monk
     monkeypatch.setattr(pi, "Framebuffer", lambda hw: (_ for _ in ()).throw(AssertionError("drew on the screen")))
     bootscreen.run_real(cfg, load_hardware(cfg.hardware, cfg.hardware_overrides))
     assert "no videos" in capsys.readouterr().out
+
+
+def test_the_greeting_is_saved_for_the_next_boot(tmp_path):
+    from tubeless.config import DEFAULT_GREETING
+    rig = Rig(tmp_path)
+    try:
+        assert rig.app.set_greeting("Wake up, Homer...") == "Wake up, Homer..."
+        assert json.loads(rig.app.config_path.read_text())["boot_greeting"] == "Wake up, Homer..."
+        assert rig.app.cfg.boot_greeting == "Wake up, Homer..."
+        assert rig.app.set_greeting("") == DEFAULT_GREETING
+        assert "boot_greeting" not in json.loads(rig.app.config_path.read_text())
+    finally:
+        rig.stop()

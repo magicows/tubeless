@@ -60,8 +60,8 @@
 8. **Install-time page** (idea, from the SimpTV rebuild): the installer starts a tiny web page, standard library only, before the long package
    download. It shows live progress (the TV screen stays dark until the display is set up, so today nothing says what is happening) and lets
    the builder set the TV name, boot greeting, YouTube yes/no and the standby picture while the install runs. It writes `config.json`, which the
-   later steps read. Same PIN idea as the upload page, printed in the terminal. Smaller step first: `--greeting` flag, and `get.sh` asking for
-   name, greeting and YouTube before it starts.
+   later steps read. Same PIN idea as the upload page, printed in the terminal. Smaller step first: `get.sh` asking for
+   name and YouTube before it starts (the wake-up message is no longer an install option: it has a placeholder and is set on the upload page).
 9. **Streaming after a reboot** (known gap): a streaming channel can run through several videos before Wi-Fi is up (three were skipped with
    "No Wi-Fi" in one test). Wait for the network, or retry the same video instead of moving on.
 10. **Channel sources** (see below), after the library index.
@@ -93,12 +93,18 @@ the player a list of things to play and their lengths. Channels are created and 
   * Developed against a fake server in the tests; the author's own server is used only for the final check, with credentials typed by
     the author on the companion page.
 
-## Themes (idea)
+## Themes
 
-A theme is a small folder or zip that changes how a TV looks and sounds, chosen on the companion page: menu and boot-screen
-colours and style (today's black-and-green "Matrix" look is the default theme), the boot greeting and menu title, and the static
-clips. Themes are user-supplied; no media is shipped (the Simpsons theme stays the author's own). Needs the colours currently
-hard-coded in `render.py` and `bootscreen.py` to move into a theme file.
+**Built (unreleased):** a theme is a few colours plus shape options (`tubeless/themes.py`), chosen on the upload page. It restyles the menu,
+the information screens (upload, Wi-Fi setup, calibration, no videos, shutting down) and the web pages. Built in: Classic (the original
+yellow and green), Neobrutalist, Nord, Dracula, Gruvbox, Solarized light. A pasted palette (hex codes or a coolors.co link) becomes a theme:
+darkest or lightest colour for the background, the best-contrast colour for the text, the most colourful of the rest for the accent, with
+a readability check; "light" and "neobrutalist shapes" are options. The boot screen keeps its Matrix rain.
+
+**Decided:** themes are chosen on the web page only, not from the TV's menu (the page can show better previews).
+
+**Still to do:** better previews of a theme and of a pasted palette on the page; a theme's own boot greeting, menu title and static clips; Matrix rain colours following
+the theme (on request); sharing a theme as a file.
 
 ## Later / experiments
 

@@ -19,6 +19,8 @@ def expand(path) -> Path:
 
 
 MAX_NAME_LENGTH = 16          # longer names don't fit next to the channel name in the menu title
+MAX_GREETING_LENGTH = 40      # the typed line on the boot screen has room for about this much
+DEFAULT_GREETING = "Wake up, couch potato..."      # the placeholder until one is chosen on the web page
 
 
 def user_config_path() -> Path:
@@ -41,7 +43,7 @@ class Config:
     static_long: str = ""
 
     # The line typed out on the boot screen.
-    boot_greeting: str = "Wake up, couch potato..."
+    boot_greeting: str = DEFAULT_GREETING
 
     # Hardware profile and per-field overrides (see hardware.py).
     hardware: str = "waveshare-2.8-dpi"
@@ -139,12 +141,20 @@ def set_config_value(path, key: str, value):
             raise ValueError("The name can't be empty.")
         if len(value) > MAX_NAME_LENGTH:
             raise ValueError(f"That name is too long ({len(value)} characters; the menu title fits {MAX_NAME_LENGTH}).")
+    if key == "boot_greeting":
+        value = " ".join(str(value).split())            # one line, no stray spacing
+        if len(value) > MAX_GREETING_LENGTH:
+            raise ValueError(f"That is too long ({len(value)} characters; the boot screen fits {MAX_GREETING_LENGTH}).")
     path = expand(path)
     stored = {}
     if path.is_file():
         with open(path) as f:
             stored = json.load(f)
-    stored[key] = value
+    if key == "boot_greeting" and not value:            # blank puts the placeholder back
+        stored.pop(key, None)
+        value = DEFAULT_GREETING
+    else:
+        stored[key] = value
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w") as f:

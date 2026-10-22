@@ -54,7 +54,10 @@ class SetupServer:
     def page(self) -> bytes:
         if self._page is None:
             self._page = (ASSETS_DIR / "setup.html").read_bytes()
-        return self._page
+        css = getattr(self.hooks, "theme_css", lambda: "")()              # the chosen theme (see themes.py)
+        style = getattr(self.hooks, "theme_style", lambda: "soft")()
+        return self._page.replace(b'<style id="themecss"></style>', ('<style id="themecss">%s</style>' % css).encode()) \
+                         .replace(b'data-style="soft"', ('data-style="%s"' % style).encode(), 1)
 
     def start(self) -> int:
         server = self

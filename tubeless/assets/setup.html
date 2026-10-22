@@ -1,34 +1,40 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-style="soft">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>TV Wi-Fi setup</title>
 <style>
-  :root { color-scheme: dark; --bg:#0b0f0c; --panel:#121a14; --line:#1f2f24; --text:#e4efe7; --dim:#8da596; --accent:#35f26b; --bad:#ff6b6b; }
+  :root { color-scheme: dark; --bg:#0b0f0c; --panel:#121a14; --line:#1f2f24; --text:#e4efe7; --dim:#8da596; --accent:#35f26b; --bad:#ff6b6b; --atext:#35f26b; --on-accent:#04210d; --field:#0b130d; --ink:#0b0f0c; }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding:env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom)); }
   main { max-width:520px; margin:0 auto; }
-  h1 { margin:22px 0 4px; font:700 22px/1.2 ui-monospace, Menlo, monospace; color:var(--accent); letter-spacing:.04em; text-transform:uppercase; word-break:break-word; }
+  h1 { margin:22px 0 4px; font:700 22px/1.2 ui-monospace, Menlo, monospace; color:var(--atext); letter-spacing:.04em; text-transform:uppercase; word-break:break-word; }
   .sub { color:var(--dim); font-size:14px; margin:0 0 8px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; margin:14px 0; }
   .card h2 { margin:0 0 10px; font-size:13px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); font-weight:600; }
   ul { list-style:none; margin:0; padding:0; }
-  li button.net { width:100%; display:flex; justify-content:space-between; gap:12px; text-align:left; background:#0b130d; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:13px 14px; margin:6px 0; font:inherit; cursor:pointer; }
+  li button.net { width:100%; display:flex; justify-content:space-between; gap:12px; text-align:left; background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:13px 14px; margin:6px 0; font:inherit; cursor:pointer; }
   li button.net:hover, li button.net:focus { border-color:var(--accent); outline:none; }
   .meta { color:var(--dim); font-size:13px; white-space:nowrap; }
   label { display:block; color:var(--dim); font-size:14px; margin-bottom:6px; }
-  input { width:100%; background:#0b130d; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:12px 14px; font:inherit; }
+  input { width:100%; background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:12px 14px; font:inherit; }
   input:focus { outline:2px solid var(--accent); outline-offset:1px; }
   .row { display:flex; gap:10px; margin-top:12px; } .row > * { flex:1; }
-  button.go { background:var(--accent); color:#04210d; border:0; border-radius:10px; padding:13px 18px; font:700 16px/1 inherit; cursor:pointer; }
-  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:10px; padding:13px 18px; font:600 16px/1 inherit; cursor:pointer; }
+  button.go { background:var(--accent); color:var(--on-accent); border:0; border-radius:10px; padding:13px 18px; font:700 16px/1 inherit; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--atext); border:1px solid var(--atext); border-radius:10px; padding:13px 18px; font:600 16px/1 inherit; cursor:pointer; }
   button:disabled { opacity:.45; }
-  .msg { margin:10px 0 0; font-size:14px; min-height:1.2em; } .msg.bad { color:var(--bad); } .msg.ok { color:var(--accent); }
+  .msg { margin:10px 0 0; font-size:14px; min-height:1.2em; } .msg.bad { color:var(--bad); } .msg.ok { color:var(--atext); }
   .show { display:flex; align-items:center; gap:8px; margin-top:8px; color:var(--dim); font-size:14px; } .show input { width:auto; }
+  html[data-style=brutal] .card { border:3px solid var(--ink); border-radius:0; box-shadow:6px 6px 0 var(--ink); }
+  html[data-style=brutal] input, html[data-style=brutal] li button.net { border:3px solid var(--ink); border-radius:0; }
+  html[data-style=brutal] button.go, html[data-style=brutal] button.ghost { border:3px solid var(--ink); border-radius:0; box-shadow:4px 4px 0 var(--ink); color:var(--on-accent); }
+  html[data-style=brutal] button.ghost { background:var(--panel); color:var(--text); }
+  html[data-style=brutal] h1 { display:inline-block; color:var(--on-accent); background:var(--accent); padding:4px 10px; border:3px solid var(--ink); box-shadow:4px 4px 0 var(--ink); }
   .hide { display:none !important; }
 </style>
+<style id="themecss"></style>
 </head>
 <body>
 <main>

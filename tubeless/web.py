@@ -227,6 +227,9 @@ class WebServer:
     hooks (provided by the app):
         state() -> dict                       name, channels, ...
         set_name(name) -> str                 raises ValueError("why not")
+        theme_css() / theme_style()           the chosen theme, for the page (the colours as CSS; 'soft' or 'brutal')
+        add_palette(name, text, light, brutal) -> dict      a pasted palette, saved and chosen; delete_palette(id); raise ValueError("why not")
+        set_greeting(text) -> str             the boot screen's typed line; blank = the placeholder; raises ValueError("why not")
         uploaded(info: dict) -> None          after a file completes (info includes advice)
         standby_path() -> str                 the picture shown while the player restarts
         set_standby(data: bytes) -> None      raises ValueError("why not")
@@ -252,7 +255,10 @@ class WebServer:
     def page(self) -> bytes:
         if self._page is None:
             self._page = (ASSETS_DIR / "upload.html").read_bytes()
-        return self._page
+        css = getattr(self.hooks, "theme_css", lambda: "")()                  # the chosen theme's colours, so there is no flash of the wrong ones
+        style = getattr(self.hooks, "theme_style", lambda: "soft")()
+        return self._page.replace(b'<style id="themecss"></style>', ('<style id="themecss">%s</style>' % css).encode()) \
+                         .replace(b'data-style="soft"', ('data-style="%s"' % style).encode(), 1)
 
     def start(self) -> int:
         server = self
@@ -414,6 +420,32 @@ class WebServer:
                         return
                     try:
                         self._json(200, {"name": server.hooks.set_name(str(data.get("name", "")))})
+                    except ValueError as e:
+                        self._fail(400, str(e))
+                elif route == "/api/greeting":
+                    if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    try:
+                        self._json(200, {"greeting": server.hooks.set_greeting(str(data.get("greeting", "")))})
+                    except ValueError as e:
+                        self._fail(400, str(e))
+                elif route in ("/api/palette", "/api/palette/delete"):
+                    if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    try:
+                        if route == "/api/palette":
+                            entry = server.hooks.add_palette(str(data.get("name", "")), str(data.get("colours", "")),
+                                                              data.get("light") is True, data.get("brutal") is True)
+                            self._json(200, {"palette": entry, "css": server.hooks.theme_css(), "style": server.hooks.theme_style()})
+                        else:
+                            server.hooks.delete_palette(str(data.get("id", "")))
+                            self._json(200, {"css": server.hooks.theme_css(), "style": server.hooks.theme_style()})
                     except ValueError as e:
                         self._fail(400, str(e))
                 elif route == "/api/settings":

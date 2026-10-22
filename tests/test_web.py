@@ -181,6 +181,29 @@ class Hooks:
         self.name = name.strip()
         return self.name
 
+    theme_state = ("--accent:#ffc900", "brutal")
+
+    def theme_css(self):
+        return ":root{" + self.theme_state[0] + "}"
+
+    def theme_style(self):
+        return self.theme_state[1]
+
+    def add_palette(self, name, text, light, brutal):
+        if not text.strip():
+            raise ValueError("no colours")
+        return {"id": "c-" + name.lower(), "name": name, "light": light, "brutal": brutal}
+
+    def delete_palette(self, theme_id):
+        if theme_id != "c-ocean":
+            raise ValueError("not yours")
+
+    def set_greeting(self, text):
+        if len(text) > 40:
+            raise ValueError("too long")
+        self.greeting = text.strip() or "Wake up, couch potato..."
+        return self.greeting
+
     def uploaded(self, info):
         self.uploads.append(info)
 
@@ -284,6 +307,9 @@ def test_state_name_and_channel(server):
     assert status == 200 and state["name"] == "Test TV" and state["free_bytes"] > 0 and "version" in state
     assert call(server, "POST", "/api/name", {"name": "  Den "}, token)[1] == {"name": "Den"}
     assert call(server, "POST", "/api/name", {"name": ""}, token)[0] == 400
+    assert call(server, "POST", "/api/greeting", {"greeting": " Hi Homer "}, token)[1] == {"greeting": "Hi Homer"}
+    assert call(server, "POST", "/api/greeting", {"greeting": "x" * 41}, token)[0] == 400
+    assert call(server, "POST", "/api/greeting", {"greeting": "Hi"})[0] == 401                  # not without logging in
     assert call(server, "POST", "/api/channel", {"name": "3.new stuff"}, token)[1] == {"channel": "3.new stuff"}
     assert (server.root / "3.new stuff").is_dir()
     status, body = call(server, "POST", "/api/channel", {"name": "../x"}, token)
@@ -476,3 +502,18 @@ def test_static_lengths_over_http(server):
     assert state["lengths"]["between"] == 1.0 and state["lengths"]["change"] == 4.0
     code, body = call(server, "POST", "/api/static/lengths", {"between": 0.2}, token=token)[:2]
     assert code == 400 and "lengths offered" in body["error"]
+
+
+def test_the_page_carries_the_chosen_theme_and_the_palette_endpoints_need_the_pin(server):
+    status, page = call(server, "GET", "/")
+    html = page.decode()
+    assert status == 200
+    assert "--accent:#ffc900" in html and 'data-style="brutal"' in html and 'data-style="soft"' not in html
+    assert call(server, "POST", "/api/palette", {"name": "Ocean", "colours": "264653 2a9d8f"})[0] == 401
+    assert call(server, "POST", "/api/palette/delete", {"id": "c-ocean"})[0] == 401
+    token = login(server)
+    status, body = call(server, "POST", "/api/palette", {"name": "Ocean", "colours": "264653 2a9d8f", "brutal": True}, token)
+    assert status == 200 and body["palette"]["id"] == "c-ocean" and body["palette"]["brutal"] is True and body["style"] == "brutal"
+    assert call(server, "POST", "/api/palette", {"name": "Ocean", "colours": "  "}, token)[0] == 400
+    assert call(server, "POST", "/api/palette/delete", {"id": "c-ocean"}, token)[0] == 200
+    assert call(server, "POST", "/api/palette/delete", {"id": "classic"}, token)[0] == 400

@@ -324,6 +324,56 @@ def test_shutdown_needs_a_second_tap_to_confirm(rig):
     assert wait_for(lambda: rig.display.frame565 is not None)             # SYSTEM HALT is on the display, not only an mpv overlay
 
 
+def _header_xy(name):
+    from tubeless import render
+    from tubeless.hardware import Hardware
+    hw = Hardware()
+    x0, y0, x1, y1 = render.button_rect(name)
+    cx, cy = hw.bezel_center
+    return cx + ((x0 + x1) / 2 - 320) * hw.bezel_scale, cy + ((y0 + y1) / 2 - 240) * hw.bezel_scale
+
+
+def test_the_header_power_button_needs_two_taps(rig):
+    rig.open_menu()
+    rig.tap(*_header_xy("power"))
+    assert wait_for(lambda: rig.app.confirm_shutdown_until > time.time())
+    assert not rig.power.shutdown_requested and rig.app.menu_open
+    rig.tap(*_header_xy("power"))
+    assert wait_for(lambda: rig.power.shutdown_requested)
+    assert rig.state["mode"] == "shutdown"
+
+
+def test_the_header_upload_button_needs_two_taps(rig):
+    rig.open_menu()
+    rig.tap(*_header_xy("upload"))
+    assert wait_for(lambda: rig.app.confirm_transfer_until > time.time())
+    assert rig.state["mode"] == "play" and rig.app.menu_open
+    rig.tap(*_header_xy("upload"))
+    assert wait_for(lambda: rig.state["mode"] == "transfer", timeout=8)
+
+
+def test_arming_one_header_button_disarms_the_other(rig):
+    rig.open_menu()
+    rig.tap(*_header_xy("power"))
+    assert wait_for(lambda: rig.app.confirm_shutdown_until > time.time())
+    rig.tap(*_header_xy("upload"))
+    assert wait_for(lambda: rig.app.confirm_transfer_until > time.time())
+    assert rig.app.confirm_shutdown_until == 0.0 and not rig.power.shutdown_requested        # the power button is back to square one
+    rig.tap(*_header_xy("power"))
+    assert wait_for(lambda: rig.app.confirm_shutdown_until > time.time()) and not rig.power.shutdown_requested
+
+
+def test_a_closed_menu_forgets_the_first_tap(rig):
+    rig.open_menu()
+    rig.tap(*_header_xy("power"))
+    assert wait_for(lambda: rig.app.confirm_shutdown_until > time.time())
+    rig.app.close_menu()
+    rig.open_menu()
+    rig.tap(*_header_xy("power"))
+    time.sleep(0.3)
+    assert not rig.power.shutdown_requested                                                  # this is a first tap again
+
+
 def test_gestures_are_ignored_while_shutting_down(rig):
     rig.app.do_shutdown()
     before = list(rig.player.commands)

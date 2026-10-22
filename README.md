@@ -26,10 +26,11 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
   [Wi-Fi chip and the slower bus clock](#wi-fi-chip-and-the-slower-bus-clock)). Once a minute it writes a health note to the log (power
   flags, temperature, load, free memory, Wi-Fi signal), so a stutter can be lined up with what the Pi was doing.
 * **Menu:** pause, next and previous, brightness, channels, and under Settings: shuffle, sleep timer, auto-dim,
-  touch calibration, upload, Wi-Fi setup, shut down.
+  touch calibration, upload, Wi-Fi setup, shut down. Two icon buttons at the top right of the menu go straight to **shut down** and to
+  **upload and settings mode**; each asks for a second tap within a few seconds before it does anything.
 * **Dimming.** A paused picture dims after a minute untouched. Auto-dim (2, 5 or 10 minutes, or off) dims a playing one. A touch
   wakes the screen and does nothing else.
-* **Boot screen** with a live checklist of what is starting up, and a name and greeting you choose.
+* **Boot screen** with a live checklist of what is starting up, and a name and wake-up message you choose (on the upload page).
 
 ## Get videos onto the TV
 
@@ -45,7 +46,7 @@ Only someone who can see the TV can get in. From there you can:
 
 * create channels and send video files (large files upload in pieces, and a dropped connection resumes);
 * get advice on files that may not play well (resolution, codec, bitrate). Nothing is converted for you;
-* rename the TV;
+* rename the TV and change the wake-up message typed out on the boot screen (up to 40 characters; blank for the standard one);
 * change the "technical difficulties" picture shown when the player restarts;
 * choose the **TV static**: the built-in one (with sound, or silent), no static (just a quick blank), or your own clip, uploaded or
   picked from the TV's home folder (never your videos folder). With ffmpeg (YouTube support installs it) the TV can also change a clip's
@@ -53,6 +54,7 @@ Only someone who can see the TV can get in. From there you can:
   only the first 0.6 seconds of it between videos and the first 3 seconds when you change channel (both adjustable; a clip shorter
   than that is repeated to fill the time). The built-in static keeps its own short and long clips;
 * set a channel to play **in order** or **shuffled** (a YouTube channel's "in order" follows its playlist), or leave it following the TV's Shuffle setting;
+* choose a **theme** for the menu, the information screens and the page itself (the original yellow and green, a neobrutalist one, Nord, Dracula, Gruvbox, Solarized light), or paste a palette from a colour-sharing site (hex codes or a coolors.co link) and the TV works out the background, text and accent, keeping the text readable. The boot screen keeps its Matrix rain;
 * set brightness, auto-dim, the sleep timer and shuffle, choose the **YouTube picture quality** (240p, 360p or 480p; 360p is the default and is plenty for this screen), and see the TV's status and recent log;
 * see how long each channel is (video lengths are read with `mediainfo` while the TV is in upload mode);
 * check for a newer release and update the TV from the page (see Updating below);
@@ -204,7 +206,7 @@ python3 -m tubeless config set name "Living Room" --restart
 python3 -m tubeless config show
 ```
 
-The boot greeting, folders and static clips are settings too. Themes (colours, boot style, your own static) are on the
+Themes are on the upload page (above). The folders and static clips are settings too (the wake-up message is on the upload page, or `config set boot_greeting`). Bigger themes (boot style, your own static, sounds) are on the
 [roadmap](docs/ROADMAP.md).
 
 ## Hardware

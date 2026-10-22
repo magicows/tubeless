@@ -308,12 +308,10 @@ WIFI_POWERSAVE_CONF = ("# Installed by Tubeless: the Pi Zero 2 W's Wi-Fi chip ca
                        "[connection]\nwifi.powersave = 2\n")
 
 
-def default_config(name: str, greeting: str = "") -> str:
+def default_config(name: str) -> str:
+    """Just the name. The boot greeting stays the placeholder until it is changed on the upload page."""
     import json
-    data = {"name": name}
-    if greeting:
-        data["boot_greeting"] = greeting
-    return json.dumps(data, indent=2) + "\n"
+    return json.dumps({"name": name}, indent=2) + "\n"
 
 
 # ─────────────────────────────────────────────
@@ -429,7 +427,6 @@ class Context:
     skip_sd_test: bool = False
     allow_changed_overlays: bool = False
     with_youtube: bool = False
-    greeting: str = ""
     runner: Runner = field(default_factory=Runner)
     reboot_needed: bool = False
 
@@ -601,7 +598,7 @@ def step_app(ctx: Context) -> None:
     if cfg.exists():
         ctx.say(f"      config kept: {cfg}")
     else:
-        ctx.runner.write(cfg, default_config(ctx.name, ctx.greeting), owner=ctx.user)
+        ctx.runner.write(cfg, default_config(ctx.name), owner=ctx.user)
         if not ctx.dry_run:
             _chown_tree(cfg.parent, ctx.user)
         ctx.say("      " + ctx.did(f"config created: {cfg}  (name: {ctx.name})", f"would create {cfg}  (name: {ctx.name})"))
@@ -779,7 +776,7 @@ def cmd_all(args) -> int:
     source = Path(args.source).resolve() if args.source else Path(__file__).resolve().parent.parent
     ctx = Context(user=user, home=home, source=source, name=args.name, boot_dir=Path(args.boot_dir) if args.boot_dir else None,
                   dry_run=args.dry_run, skip_sd_test=args.skip_sd_test, allow_changed_overlays=args.allow_changed_overlays,
-                  with_youtube=args.with_youtube, greeting=args.greeting or "", runner=Runner(args.dry_run))
+                  with_youtube=args.with_youtube, runner=Runner(args.dry_run))
     return install_all(ctx)
 
 
@@ -836,7 +833,6 @@ def main(argv=None) -> int:
     p = sub.add_parser("all", help="do everything (run with sudo)")
     p.add_argument("--user", help="the user the TV runs as (default: the user who ran sudo)")
     p.add_argument("--name", default="Tubeless", help="the TV's display name (default: Tubeless)")
-    p.add_argument("--greeting", help="the line typed out on the boot screen (default: Wake up, couch potato...)")
     p.add_argument("--source", help="the checkout to install from (default: the one this file is in)")
     p.add_argument("--boot-dir")
     p.add_argument("--dry-run", action="store_true", help="show what would be done, change nothing")

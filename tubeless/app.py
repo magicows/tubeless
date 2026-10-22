@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import qr as qrcodes
-from . import render
+from . import render, themes
 from .config import Config, expand, set_config_value, user_config_path
 from .gestures import GestureRecognizer
 from . import health
@@ -84,6 +84,10 @@ class App:
         self.youtube_height = h if h in HEIGHTS else DEFAULT_HEIGHT
         if hasattr(player, "youtube_height"):
             player.youtube_height = self.youtube_height
+        customs = self.settings.get("custom_themes", [])
+        self.custom_themes: list = [c for c in customs if isinstance(c, dict)] if isinstance(customs, list) else []
+        self.theme_id = str(self.settings.get("theme", themes.DEFAULT_THEME))
+        self._apply_theme()
         self.lookahead_enabled = bool(self.settings.get("youtube_lookahead", True))       # see lookahead.py
         self.lookahead = Lookahead(lambda: find_ytdlp(cfg.ytdlp_path), lambda: self.youtube_height)
         self.lookahead_after = 15.0            # seconds into a video before the next one is looked up (the current one settles first)
@@ -109,6 +113,7 @@ class App:
         self.sleep_deadline: Optional[float] = None
         self.dimmed = False
         self.confirm_shutdown_until = 0.0
+        self.confirm_transfer_until = 0.0     # likewise for the header's upload button
         self.last_activity = time.time()
         self.last_gesture: Optional[tuple] = None
         self._calib: Optional[dict] = None
@@ -526,7 +531,7 @@ class App:
     def open_menu(self) -> None:
         self._set_menu_open(True)
         self.menu.reset()
-        self.confirm_shutdown_until = 0.0
+        self.confirm_shutdown_until = self.confirm_transfer_until = 0.0
         self.schedule_menu_hide()
         log.info("menu opened")
         self.render_menu()
@@ -537,7 +542,7 @@ class App:
 
     def close_menu(self) -> None:
         self._close_menu_quietly()
-        self.confirm_shutdown_until = 0.0
+        self.confirm_shutdown_until = self.confirm_transfer_until = 0.0
         self._clear_overlay()
         log.info("menu closed")
 
@@ -548,7 +553,8 @@ class App:
             paused=bool(self.player.get("pause")), brightness=self.brightness, shuffle=shuffling,
             channels=[c.label for c in channels], current_channel=self.channel_index,
             sleep_timer_min=self.sleep_timer_min, auto_dim_min=self.auto_dim_min,
-            confirm_shutdown=time.time() < self.confirm_shutdown_until, wifi_setup=self.wifi_available)
+            confirm_shutdown=time.time() < self.confirm_shutdown_until,
+            confirm_transfer=time.time() < self.confirm_transfer_until, wifi_setup=self.wifi_available)
 
     def render_menu(self) -> None:
         if not self.menu_open:
@@ -558,8 +564,11 @@ class App:
         self.menu.top = render.clamp_top(self.menu.top, len(items))
         channels = self.channels()
         subtitle = channels[self.channel_index].label if channels else ""
-        image = render.render_menu_landscape(items, self.menu.index, self.hw, title=self.name,
-                                             subtitle=subtitle, top=self.menu.top)
+        now = time.time()
+        armed = tuple(n for n, until in (("power", self.confirm_shutdown_until), ("upload", self.confirm_transfer_until)) if now < until)
+        footer = {"power": "TAP THE POWER BUTTON AGAIN TO SHUT DOWN", "upload": "TAP THE UPLOAD BUTTON AGAIN FOR UPLOAD AND SETTINGS"}[armed[-1]] if armed else None
+        image = render.render_menu_landscape(items, self.menu.index, self.hw, title=self.name, subtitle=subtitle,
+                                             top=self.menu.top, armed=armed, **({"footer": footer} if footer else {}))
         self._set_overlay(image)
 
     def menu_select(self) -> None:
@@ -643,6 +652,20 @@ class App:
             self.do_shutdown()
         else:
             self.confirm_shutdown_until = now + 4.0       # the row now reads "Tap again to confirm"
+            self.confirm_transfer_until = 0.0             # one thing at a time waits for its second tap
+            self.schedule_menu_hide()
+            self.render_menu()
+
+    def request_transfer(self) -> None:
+        """The header's upload button: the first tap arms it, a second one within a few seconds starts upload mode."""
+        now = time.time()
+        if now < self.confirm_transfer_until:
+            self.confirm_transfer_until = 0.0
+            self.close_menu()
+            self.start_transfer()
+        else:
+            self.confirm_transfer_until = now + 4.0
+            self.confirm_shutdown_until = 0.0
             self.schedule_menu_hide()
             self.render_menu()
 
@@ -783,6 +806,13 @@ class App:
         if kind == "long_press":
             self.close_menu()
         elif kind == "tap":
+            button = render.header_hit(g[1], g[2], self.hw)
+            if button == "power":
+                self.request_shutdown()
+                return
+            if button == "upload":
+                self.request_transfer()
+                return
             total = len(self.menu.items(self._menu_ctx()))
             hit = render.hit_test(g[1], g[2], self.menu.top, total, self.hw)
             if hit == render.OUTSIDE:
@@ -1489,6 +1519,59 @@ class App:
         log.info("renamed to %r from the upload page", value)
         return value
 
+    def set_greeting(self, text: str) -> str:
+        """The line typed out on the boot screen (read from config.json at boot). Blank puts the placeholder back."""
+        value = set_config_value(self.config_path, "boot_greeting", text)       # raises ValueError with a message for the page
+        self.cfg.boot_greeting = value
+        log.info("boot greeting changed from the upload page")
+        return value
+
+    # --- themes (see themes.py) ----------------------------------------------------------------------------------
+    def _apply_theme(self) -> None:
+        available = themes.all_themes(self.custom_themes)
+        if self.theme_id not in available:
+            self.theme_id = themes.DEFAULT_THEME             # a palette that was deleted, or a settings file from elsewhere
+        themes.activate(available[self.theme_id])
+
+    def _theme_changed(self) -> None:
+        self._apply_theme()
+        self._screen_dirty = True                           # an info screen on show redraws in the new colours
+        if self.menu_open:
+            self.render_menu()
+
+    def theme_list(self) -> list:
+        customs = {c.get("id") for c in self.custom_themes}
+        return [dict(t.to_dict(), custom=t.id in customs) for t in themes.all_themes(self.custom_themes).values()]
+
+    def theme_css(self) -> str:
+        return themes.active().css()
+
+    def theme_style(self) -> str:
+        return themes.active().style
+
+    def add_palette(self, name: str, text: str, light: bool, brutal: bool) -> dict:
+        """Save a pasted palette and switch to it. Raises ValueError with a message fit for the page."""
+        if len(self.custom_themes) >= themes.MAX_CUSTOM:
+            raise ValueError(f"That is {themes.MAX_CUSTOM} palettes already; remove one first.")
+        taken = list(themes.all_themes(self.custom_themes))
+        entry = themes.make_custom(name, text, light, brutal, taken)
+        self.custom_themes.append(entry)
+        self.theme_id = entry["id"]
+        self.settings.set(custom_themes=list(self.custom_themes), theme=self.theme_id)
+        self._theme_changed()
+        log.info("palette %r added from the web page and chosen", entry["name"])
+        return entry
+
+    def delete_palette(self, theme_id: str) -> None:
+        if theme_id not in {c.get("id") for c in self.custom_themes}:
+            raise ValueError("That is not one of your palettes.")
+        self.custom_themes = [c for c in self.custom_themes if c.get("id") != theme_id]
+        self.settings.set(custom_themes=list(self.custom_themes))
+        if self.theme_id == theme_id:
+            self.theme_id = themes.DEFAULT_THEME
+            self.settings.set(theme=self.theme_id)
+        self._theme_changed()
+
     def set_standby(self, data: bytes) -> None:
         """Keep a picture sent from the web page as the standby picture. Raises ValueError with a message for the page."""
         import io
@@ -1518,16 +1601,19 @@ class App:
         for c in self.library.channels():
             channels.append({"name": c.name, "label": c.label, "count": len(self.library.videos(c)),
                              "library": self.index.summary(c), "order": self.channel_order.get(c.name)})
-        return {"name": self.name, "channels": channels, "standby_custom": self.cfg.standby_custom.is_file(),
-                "scan": self.index.status(), "settings": self.web_settings(), "static": self.statics.state()}
+        return {"name": self.name, "greeting": self.cfg.boot_greeting, "channels": channels, "standby_custom": self.cfg.standby_custom.is_file(),
+                "scan": self.index.status(), "settings": self.web_settings(), "static": self.statics.state(),
+                "themes": self.theme_list(), "theme": self.theme_id,
+                "theme_css": self.theme_css(), "theme_style": self.theme_style()}
 
     # --- settings, status and logs for the web page ------------------------------------------------------------
     def web_settings(self) -> dict:
         return {"values": {"brightness": self.brightness, "shuffle": self.shuffle, "auto_dim_min": self.auto_dim_min,
                            "sleep_timer_min": self.sleep_timer_min, "youtube_height": self.youtube_height,
-                           "youtube_lookahead": self.lookahead_enabled},
+                           "youtube_lookahead": self.lookahead_enabled, "theme": self.theme_id},
                 "options": {"brightness": list(self.hw.brightness_levels), "auto_dim_min": list(AUTO_DIM_STEPS),
-                            "sleep_timer_min": list(SLEEP_TIMER_STEPS), "youtube_height": list(HEIGHTS)}}
+                            "sleep_timer_min": list(SLEEP_TIMER_STEPS), "youtube_height": list(HEIGHTS),
+                            "theme": list(themes.all_themes(self.custom_themes))}}
 
     def set_channel_order(self, channel: str, order: str) -> None:
         """'shuffle', 'order', or 'default' (follow the TV's Shuffle setting) for one channel, from the web page."""
@@ -1571,6 +1657,10 @@ class App:
                     self._ytdlp.height = value
                 if self.youtube is not None and hasattr(self.youtube.yt, "height"):
                     self.youtube.yt.height = value                          # and new downloads use it straight away
+            elif key == "theme":
+                self.theme_id = value
+                self.settings.set(theme=value)
+                self._theme_changed()
             elif key == "auto_dim_min":
                 self.auto_dim_min = value
                 self.settings.set(auto_dim_min=value)
@@ -1666,6 +1756,9 @@ class _WebHooks:
     def set_name(self, name: str) -> str:
         return self.app.rename(name)
 
+    def set_greeting(self, text: str) -> str:
+        return self.app.set_greeting(text)
+
     def standby_path(self) -> str:
         return self.app.cfg.standby_image
 
@@ -1678,6 +1771,18 @@ class _WebHooks:
 
     def set_channel_order(self, channel: str, order: str) -> None:
         self.app.set_channel_order(channel, order)
+
+    def theme_css(self) -> str:
+        return self.app.theme_css()
+
+    def theme_style(self) -> str:
+        return self.app.theme_style()
+
+    def add_palette(self, name: str, text: str, light: bool, brutal: bool) -> dict:
+        return self.app.add_palette(name, text, light, brutal)
+
+    def delete_palette(self, theme_id: str) -> None:
+        self.app.delete_palette(theme_id)
 
     # the TV static (see statics.py)
     @property
@@ -1730,6 +1835,12 @@ class _SetupHooks:
 
     def name(self) -> str:
         return self.app.name
+
+    def theme_css(self) -> str:
+        return self.app.theme_css()
+
+    def theme_style(self) -> str:
+        return self.app.theme_style()
 
     def networks(self, rescan: bool):
         return self.app.setup_networks(rescan)
