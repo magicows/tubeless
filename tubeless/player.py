@@ -16,9 +16,11 @@ time, pause, seeking, static bursts) so the app can run in the simulator and in 
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
+import re
 import socket
 import subprocess
 import tempfile
@@ -89,6 +91,17 @@ class MpvIPC:
                         raise
 
 
+@functools.lru_cache(maxsize=None)
+def mpv_version() -> tuple:
+    """The installed mpv's version as numbers, e.g. (0, 40, 0); () if it can't be told."""
+    try:
+        out = subprocess.run(["mpv", "--version"], capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ()
+    m = re.search(r"mpv v?(\d+)\.(\d+)(?:\.(\d+))?", out)
+    return tuple(int(x or 0) for x in m.groups()) if m else ()
+
+
 class MpvPlayer:
     def __init__(self, cfg: Config, hw: Hardware):
         self.cfg, self.hw = cfg, hw
@@ -125,6 +138,11 @@ class MpvPlayer:
                 out.close()
         self.started_at = time.time()
         log.info("started mpv PID %s", self.proc.pid)
+
+    @property
+    def supports_lookahead(self) -> bool:
+        """Can entries be inserted into the running playlist at a position? (`loadfile ... insert-at`: mpv 0.38 and newer.)"""
+        return mpv_version()[:2] >= (0, 38)
 
     def _youtube_options(self) -> list:
         """So a YouTube link in a playlist is played (as 480p H.264) by the yt-dlp the user installed."""
@@ -200,6 +218,7 @@ class FakePlayer:
                  url_fail: Tuple[str, ...] = ()):
         self.short_static, self.long_static = short_static, long_static
         self.youtube_height = 360                                      # like MpvPlayer: the app sets it from its settings
+        self.supports_lookahead = True
         self.url_delay, self.url_fail = url_delay, tuple(url_fail)     # network entries load slowly; some never do
         self._stall_until, self._will_fail = 0.0, False
         self.duration_of = duration_of
@@ -313,6 +332,9 @@ class FakePlayer:
                 return len(self.playlist)
             if prop == "path":
                 return self.playlist[self.pos] if self.playlist else None
+            if prop.startswith("playlist/") and prop.endswith("/filename"):
+                i = int(prop.split("/")[1])
+                return self.playlist[i] if 0 <= i < len(self.playlist) else None
             if prop == "time-pos":
                 return None if self._stall_until else self.time_pos
             if prop == "duration":
@@ -339,6 +361,17 @@ class FakePlayer:
                     self.time_pos = float(value)
             elif name == "cycle" and args[1] == "pause":
                 self.paused = not self.paused
+            elif name == "loadfile" and len(args) >= 4 and args[2] == "insert-at":
+                i = max(0, min(int(args[3]), len(self.playlist)))
+                self.playlist.insert(i, str(args[1]))
+                if i <= self.pos:
+                    self.pos += 1                                       # like mpv: the entry that is playing keeps playing
+            elif name == "playlist-remove":
+                i = int(args[1])
+                if 0 <= i < len(self.playlist) and i != self.pos:
+                    del self.playlist[i]
+                    if i < self.pos:
+                        self.pos -= 1
             elif name == "loadfile":
                 self._load(args[1])
             elif name == "seek":

@@ -27,7 +27,8 @@ from .gestures import GestureRecognizer
 from . import health
 from .hardware import Hardware, apply_affine, solve_affine
 from .libindex import LibraryIndex
-from .library import Library, Plan, Playlists
+from .lookahead import Lookahead
+from .library import STREAM_PREFIX, Library, Plan, Playlists
 from .menu import AUTO_DIM_STEPS, SLEEP_TIMER_STEPS, MenuContext, MenuModel, next_step
 from .pixels import image_to_565
 from .skip import skip_target
@@ -83,6 +84,11 @@ class App:
         self.youtube_height = h if h in HEIGHTS else DEFAULT_HEIGHT
         if hasattr(player, "youtube_height"):
             player.youtube_height = self.youtube_height
+        self.lookahead_enabled = bool(self.settings.get("youtube_lookahead", False))      # experimental: see lookahead.py
+        self.lookahead = Lookahead(lambda: find_ytdlp(cfg.ytdlp_path), lambda: self.youtube_height)
+        self.lookahead_after = 15.0            # seconds into a video before the next one is looked up (the current one settles first)
+        self.lookahead_min_free_mb = 80        # not when memory is this short
+        self._lookahead_tried: set = set()     # videos already tried this time round, so a failure is not retried every few seconds
         order = self.settings.get("channel_order", {})
         self.channel_order = {k: v for k, v in (order if isinstance(order, dict) else {}).items() if v in ("shuffle", "order")}
         b = self.settings.get("brightness", 100)
@@ -292,6 +298,7 @@ class App:
         plan = self.playlists.plan(self.current_channel(), self.shuffle_for(self.current_channel()))
         self.plan = plan
         self._cur_rel = None
+        self._lookahead_tried.clear()
         path = self.playlists.write_m3u(plan, self.m3u_path)
         self.player.start(path)
         self._set_resume(plan)
@@ -933,6 +940,55 @@ class App:
                 log.exception("tracker error")
 
     # ─────────────────────────────────────────
+    #  Look-ahead: have the NEXT YouTube video's real addresses ready before its turn (see lookahead.py)
+    # ─────────────────────────────────────────
+    def _lookahead_step(self, pos: int) -> None:
+        """Called from the tracker while a video is playing at playlist position `pos`."""
+        if (self.mode != "play" or self.plan is None or self.menu_open
+                or not getattr(self.player, "supports_lookahead", False)):
+            return
+        idx = pos + 2                                           # the next video (a static clip sits between)
+        nxt = self.playlists.episode_at(self.plan, idx)
+        if nxt is None or not self.library.is_stream(nxt):
+            return
+        vid = nxt[len(STREAM_PREFIX):]
+        hit = self.lookahead.ready(vid)
+        if hit:
+            self._swap_in(idx, nxt, vid, hit[0], hit[1])
+            return
+        if vid in self._lookahead_tried or self.lookahead.busy():
+            return
+        t = self.player.get("time-pos")
+        if t is None or t < self.lookahead_after:
+            return
+        free = health.available_mb()
+        if free is not None and free < self.lookahead_min_free_mb:
+            log.info("look-ahead skipped: only %d MB of memory free", free)
+            return
+        self._lookahead_tried.add(vid)
+        self.lookahead.start(vid)
+
+    def _swap_in(self, idx: int, rel: str, vid: str, entry: str, took: float) -> None:
+        """Put the ready address in the playlist where the YouTube link for that video is. It is added first and the old link
+        removed second, and the playlist is checked afterwards: a hole or an extra entry would throw out which entry is which."""
+        original = self.library.abspath(self.plan.channel, rel)
+        pos, count = self.player.get("playlist-pos"), self.player.get("playlist-count")
+        self.lookahead.forget(vid)
+        if pos is None or count is None or pos >= idx or idx >= count:
+            return                                              # too late: it is playing already, or the playlist changed
+        if self.player.get(f"playlist/{idx}/filename") != original:
+            return                                              # that entry is not the link we expected (already swapped, or changed)
+        self.cmd("loadfile", entry, "insert-at", idx)
+        self.cmd("playlist-remove", idx + 1)
+        if (self.player.get("playlist-count") != count or self.player.get(f"playlist/{idx}/filename") != entry
+                or self.player.get(f"playlist/{idx + 1}/filename") == original):
+            log.warning("look-ahead left the playlist in an unexpected state: switching it off and rebuilding the playlist")
+            self.lookahead_enabled = False
+            self.reload_channel()
+            return
+        log.info("look-ahead: the next video's address was ready (it took %.1f s to get); it is in the playlist at %d", took, idx)
+
+    # ─────────────────────────────────────────
     #  Videos played straight from YouTube: say when they are loading, and when one can't be played
     # ─────────────────────────────────────────
     def _watch_stream(self, rel: Optional[str]) -> bool:
@@ -957,6 +1013,7 @@ class App:
         if self.player.get("time-pos") is not None:
             if not cur["loaded"]:
                 cur["loaded"] = True
+                log.info("stream started playing %.1f s after the TV reached it", now - cur["since"])
                 if cur["shown"] and not self.menu_open:
                     self._clear_overlay()
         elif not cur["loaded"] and not cur["shown"] and now - cur["since"] > self.stream_notice_after and not self.menu_open and self.mode == "play":
@@ -1008,6 +1065,8 @@ class App:
         rel = self.playlists.episode_at(self.plan, pos)
         if self._watch_stream(rel):
             return                                              # the player was restarted: what we just read is out of date
+        if rel is not None and self.lookahead_enabled:
+            self._lookahead_step(pos)
         if rel is None:
             return                                              # on a static
         if self._pending_resume:
@@ -1465,7 +1524,8 @@ class App:
     # --- settings, status and logs for the web page ------------------------------------------------------------
     def web_settings(self) -> dict:
         return {"values": {"brightness": self.brightness, "shuffle": self.shuffle, "auto_dim_min": self.auto_dim_min,
-                           "sleep_timer_min": self.sleep_timer_min, "youtube_height": self.youtube_height},
+                           "sleep_timer_min": self.sleep_timer_min, "youtube_height": self.youtube_height,
+                           "youtube_lookahead": self.lookahead_enabled},
                 "options": {"brightness": list(self.hw.brightness_levels), "auto_dim_min": list(AUTO_DIM_STEPS),
                             "sleep_timer_min": list(SLEEP_TIMER_STEPS), "youtube_height": list(HEIGHTS)}}
 
@@ -1485,7 +1545,12 @@ class App:
     def set_web_setting(self, key: str, value) -> None:
         """Change one of the settings the menu has, from the web page (the TV is in upload mode then, so the player is stopped)."""
         options = self.web_settings()["options"]
-        if key == "shuffle":
+        if key == "youtube_lookahead":
+            if not isinstance(value, bool):
+                raise ValueError("That is on or off.")
+            self.lookahead_enabled = value
+            self.settings.set(youtube_lookahead=value)
+        elif key == "shuffle":
             if not isinstance(value, bool):
                 raise ValueError("Shuffle is on or off.")
             self.shuffle = value

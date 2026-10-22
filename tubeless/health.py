@@ -78,6 +78,12 @@ def snapshot(interface: str = "wlan0") -> Dict[str, object]:
             "free_mb": int(mem.group(1)) // 1024 if mem else None, "wifi_dbm": parse_wireless(_read("/proc/net/wireless"), interface)}
 
 
+def available_mb() -> Optional[int]:
+    """Memory that could be given to a program right now, in MB (None if it can't be read). Cheap: one small file."""
+    m = re.search(r"MemAvailable:\s+(\d+)", _read("/proc/meminfo"))
+    return int(m.group(1)) // 1024 if m else None
+
+
 def has_vcgencmd() -> bool:
     return shutil.which("vcgencmd") is not None
 

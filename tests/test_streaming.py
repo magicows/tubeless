@@ -150,3 +150,16 @@ def test_if_mpv_stays_stuck_the_player_is_restarted_past_the_stuck_video(tmp_pat
         assert prog["current"] != "yt-" + A and prog["current"].startswith("yt-")  # it carries on from the next video, not the stuck one
     finally:
         r.stop()
+
+
+def test_how_long_a_stream_took_to_start_is_logged(tmp_path, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="tubeless.app")
+    r = tv(tmp_path, url_delay=0.6)
+    try:
+        r.player.command("set_property", "playlist-pos", 1)
+        assert wait_for(lambda: any("stream started playing" in x.getMessage() for x in caplog.records), timeout=5)
+    finally:
+        r.stop()
+    line = [x.getMessage() for x in caplog.records if "stream started playing" in x.getMessage()][0]
+    assert "s after the TV reached it" in line
