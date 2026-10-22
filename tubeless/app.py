@@ -84,7 +84,7 @@ class App:
         self.youtube_height = h if h in HEIGHTS else DEFAULT_HEIGHT
         if hasattr(player, "youtube_height"):
             player.youtube_height = self.youtube_height
-        self.lookahead_enabled = bool(self.settings.get("youtube_lookahead", False))      # experimental: see lookahead.py
+        self.lookahead_enabled = bool(self.settings.get("youtube_lookahead", True))       # see lookahead.py
         self.lookahead = Lookahead(lambda: find_ytdlp(cfg.ytdlp_path), lambda: self.youtube_height)
         self.lookahead_after = 15.0            # seconds into a video before the next one is looked up (the current one settles first)
         self.lookahead_min_free_mb = 80        # not when memory is this short

@@ -149,7 +149,7 @@
         <label for="setSleep" style="margin-top:10px">Sleep timer (stops the TV after)</label><select id="setSleep"></select>
         <label for="setYtq" style="margin-top:10px">YouTube picture quality (streaming and downloads)</label><select id="setYtq"></select>
         <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="setShuffle" style="width:auto"> Shuffle episodes</label>
-        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="setLookahead" style="width:auto;margin-top:3px"> <span>Faster YouTube changeovers <small>(experimental) While a streamed video plays, the TV gets the next one ready, so it starts in a few seconds instead of about 12. Uses a little extra memory and processing while you watch.</small></span></label>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="setLookahead" style="width:auto;margin-top:3px"> <span>Faster YouTube changeovers <small>While a streamed video plays, the TV gets the next one ready, so it starts in a few seconds instead of about 12. Uses a little extra memory and processing while you watch.</small></span></label>
         <p class="msg" id="setmsg"></p>
       </section>
       <section class="card">
@@ -310,7 +310,7 @@ function renderSettings() {
   fillSelect('setSleep', 'sleep_timer_min', st.options.sleep_timer_min, st.values.sleep_timer_min);
   fillSelect('setYtq', 'youtube_height', st.options.youtube_height, st.values.youtube_height);
   $('setShuffle').checked = !!st.values.shuffle;
-  $('setLookahead').checked = !!st.values.youtube_lookahead;
+  $('setLookahead').checked = st.values.youtube_lookahead !== false;
 }
 async function saveSetting(key, value) {
   try { await api('/api/settings', {method: 'POST', body: JSON.stringify({[key]: value})}); say($('setmsg'), 'Saved.', 'ok'); }

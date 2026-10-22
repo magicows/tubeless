@@ -238,16 +238,16 @@ def test_if_the_swap_leaves_the_playlist_the_wrong_shape_it_switches_off_and_reb
 
 
 # ---- the switch on the page ----------------------------------------------------------------------------------------------
-def test_the_switch_is_a_saved_setting_that_is_off_by_default(tmp_path):
+def test_the_switch_is_a_saved_setting_that_is_on_by_default(tmp_path):
     r = Rig(tmp_path)
     try:
-        assert r.app.lookahead_enabled is False and r.app.web_settings()["values"]["youtube_lookahead"] is False
-        r.app.set_web_setting("youtube_lookahead", True)
         assert r.app.lookahead_enabled is True and r.app.web_settings()["values"]["youtube_lookahead"] is True
+        r.app.set_web_setting("youtube_lookahead", False)
+        assert r.app.lookahead_enabled is False and r.app.web_settings()["values"]["youtube_lookahead"] is False
         for bad in ("yes", 1, None):
             with pytest.raises(ValueError):
                 r.app.set_web_setting("youtube_lookahead", bad)
-        assert json.loads((r.cfg.data / "settings.json").read_text())["youtube_lookahead"] is True
+        assert json.loads((r.cfg.data / "settings.json").read_text())["youtube_lookahead"] is False
     finally:
         r.stop()
-    assert Rig(tmp_path, start=False).app.lookahead_enabled is True            # kept across a restart
+    assert Rig(tmp_path, start=False).app.lookahead_enabled is False           # kept across a restart
