@@ -573,3 +573,24 @@ def test_the_menu_shuffle_toggle_speaks_for_the_channel_you_are_on(tmp_path):
         assert r.app.shuffle is True and "1.cartoons" not in r.app.channel_order                    # now on, and no override left
     finally:
         r.stop()
+
+
+def test_the_youtube_quality_is_a_setting_that_defaults_to_360p_and_reaches_the_player_and_downloads(tmp_path):
+    from tubeless.youtube import FakeYtDlp
+    fake = FakeYtDlp({})
+    fake.height = 360
+    r = Rig(tmp_path, ytdlp=fake)
+    try:
+        app = r.app
+        assert app.youtube_height == 360 and app.web_settings()["values"]["youtube_height"] == 360
+        assert app.web_settings()["options"]["youtube_height"] == [240, 360, 480]
+        app.set_web_setting("youtube_height", 240)
+        assert app.youtube_height == 240 and r.player.youtube_height == 240 and fake.height == 240
+        for bad in (1080, 0, "360", True):
+            with pytest.raises(ValueError):
+                app.set_web_setting("youtube_height", bad)
+        assert json.loads((r.cfg.data / "settings.json").read_text())["youtube_height"] == 240
+    finally:
+        r.stop()
+    again = Rig(tmp_path, ytdlp=fake, start=False)
+    assert again.app.youtube_height == 240                                      # kept across a restart

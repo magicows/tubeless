@@ -46,7 +46,7 @@ def fake_video_frame(player, hw: Hardware, now: float) -> np.ndarray:
     if not player.alive() and player.get("playlist-pos") is None:
         return np.zeros((h, w, 3), np.uint8)
     path = player.get("path") or ""
-    if path in (player.short_static, player.long_static):
+    if player.is_static(path):
         noise = np.random.randint(0, 256, (h, w), dtype=np.uint8)
         return np.repeat(noise[..., None], 3, axis=2)
     seed = zlib.crc32(path.encode())

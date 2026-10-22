@@ -36,10 +36,19 @@ TITLE_MAX = 80
 BYTES_PER_SECOND = 200_000              # about 1.6 Mbit/s: what a 480p H.264 download costs, for space checks
 FALLBACK_BYTES = 150 * 1024 * 1024      # when the length isn't known
 
-# 480p or less, 30 fps or less, H.264 + AAC. First choice joins separate video and audio (needs ffmpeg); the second is a
-# ready-made single file, which YouTube offers less and less.
-FORMAT_JOINED = "bv*[height<=480][fps<=30][vcodec^=avc1]+ba[acodec^=mp4a]"
-FORMAT_SINGLE = "b[height<=480][fps<=30][vcodec^=avc1][acodec^=mp4a]"
+HEIGHTS = (240, 360, 480)               # the qualities offered on the page; the screen is 640x480, so 360p already looks fine on it
+DEFAULT_HEIGHT = 360
+
+
+def formats(height: int = DEFAULT_HEIGHT) -> Tuple[str, str]:
+    """yt-dlp format choices for a quality: `height` lines or less, 30 fps or less, H.264 + AAC. The first joins separate video
+    and audio (needs ffmpeg); the second is a ready-made single file, which YouTube offers less and less."""
+    h = height if height in HEIGHTS else DEFAULT_HEIGHT
+    return (f"bv*[height<={h}][fps<=30][vcodec^=avc1]+ba[acodec^=mp4a]", f"b[height<={h}][fps<=30][vcodec^=avc1][acodec^=mp4a]")
+
+
+# The highest quality offered (what these constants have always been): the yt-dlp compatibility checks use them.
+FORMAT_JOINED, FORMAT_SINGLE = formats(480)
 
 
 YTDLP_RELEASES = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
@@ -226,6 +235,7 @@ class YtDlp:
 
     def __init__(self, path: Optional[str] = None):
         self.path = path or find_ytdlp()
+        self.height = DEFAULT_HEIGHT                       # the quality to download at (set by the app from its settings)
         self.has_ffmpeg = shutil.which("ffmpeg") is not None
 
     def available(self) -> bool:
@@ -293,7 +303,8 @@ class YtDlp:
         """Download one video as `<stem>.mp4` into dest_dir. Returns the file name. Raises YouTubeError."""
         if not self.path:
             raise YouTubeError("yt-dlp isn't installed on this TV.", 501)
-        fmt = f"{FORMAT_JOINED}/{FORMAT_SINGLE}" if self.has_ffmpeg else FORMAT_SINGLE
+        joined, single = formats(self.height)
+        fmt = f"{joined}/{single}" if self.has_ffmpeg else single
         tmp = dest_dir / ".downloading"
         tmp.mkdir(exist_ok=True)
         cmd = self._base() + ["--newline", "--no-playlist", "--continue",

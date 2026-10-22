@@ -45,10 +45,11 @@ Only someone who can see the TV can get in. From there you can:
 * change the "technical difficulties" picture shown when the player restarts;
 * choose the **TV static**: the built-in one (with sound, or silent), no static (just a quick blank), or your own clip, uploaded or
   picked from the TV's home folder (never your videos folder). With ffmpeg (YouTube support installs it) the TV can also change a clip's
-  sound once, when you choose it: add the TV static sound, make it silent, or use a sound file you upload. Playback itself never changes:
-  it just plays whichever clip you picked;
+  sound once, when you choose it: add the TV static sound, make it silent, or use a sound file you upload. One clip is enough: the TV plays
+  only the first 0.6 seconds of it between videos and the first 3 seconds when you change channel (both adjustable; a clip shorter
+  than that is repeated to fill the time). The built-in static keeps its own short and long clips;
 * set a channel to play **in order** or **shuffled** (a YouTube channel's "in order" follows its playlist), or leave it following the TV's Shuffle setting;
-* set brightness, auto-dim, the sleep timer and shuffle, and see the TV's status and recent log;
+* set brightness, auto-dim, the sleep timer and shuffle, choose the **YouTube picture quality** (240p, 360p or 480p; 360p is the default and is plenty for this screen), and see the TV's status and recent log;
 * see how long each channel is (video lengths are read with `mediainfo` while the TV is in upload mode);
 * check for a newer release and update the TV from the page (see Updating below);
 * build YouTube channels (below).

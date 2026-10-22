@@ -467,3 +467,12 @@ def test_the_home_folder_picker_over_http(server, no_mediainfo):
     state = call(server, "POST", "/api/static/use", {"kind": "home", "ref": "clips/tv.mp4", "sound": "own"}, token=token)[1]
     assert state["choice"]["kind"] == "home" and state["choice"]["label"] == "tv.mp4"
     assert call(server, "POST", "/api/static/use", {"kind": "home", "ref": "videos/ep.mp4", "sound": "own"}, token=token)[0] == 400
+
+
+def test_static_lengths_over_http(server):
+    assert call(server, "POST", "/api/static/lengths", {"between": 1.0})[0] == 401
+    token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
+    state = call(server, "POST", "/api/static/lengths", {"between": 1.0, "change": 4.0}, token=token)[1]
+    assert state["lengths"]["between"] == 1.0 and state["lengths"]["change"] == 4.0
+    code, body = call(server, "POST", "/api/static/lengths", {"between": 0.2}, token=token)[:2]
+    assert code == 400 and "lengths offered" in body["error"]

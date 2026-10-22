@@ -147,6 +147,7 @@
         <label for="setBright">Brightness</label><select id="setBright"></select>
         <label for="setDim" style="margin-top:10px">Dim the screen after (minutes without a touch)</label><select id="setDim"></select>
         <label for="setSleep" style="margin-top:10px">Sleep timer (stops the TV after)</label><select id="setSleep"></select>
+        <label for="setYtq" style="margin-top:10px">YouTube picture quality (streaming and downloads)</label><select id="setYtq"></select>
         <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="setShuffle" style="width:auto"> Shuffle episodes</label>
         <p class="msg" id="setmsg"></p>
       </section>
@@ -161,6 +162,11 @@
         <p class="sub">The clip that plays before every video, and when you change channel.</p>
         <p class="sub" id="staticNow" style="margin:6px 0"></p>
         <div id="staticPresets"></div>
+        <div id="staticLengths" class="hide" style="margin-top:10px">
+          <p class="sub" style="margin:0 0 6px">Your clip is played for only as long as you choose (repeated if it is shorter), so one clip is enough:</p>
+          <label for="staticBetween">Between videos</label><select id="staticBetween"></select>
+          <label for="staticChange" style="margin-top:8px">When you change channel</label><select id="staticChange"></select>
+        </div>
         <h2 style="margin-top:16px">Your own clip</h2>
         <div class="row"><button class="ghost" id="staticUp">Upload a clip</button><button class="ghost" id="staticPick">Pick from the TV's home folder</button></div>
         <input id="staticFile" type="file" accept="video/*,.mkv,.gif" class="hide">
@@ -291,7 +297,7 @@ $('standbyReset').onclick = async () => {
   catch (e) { say($('standbymsg'), e.message, 'bad'); }
 };
 
-const OFF_LABELS = {auto_dim_min: v => v ? v + ' min' : 'Never', sleep_timer_min: v => v ? v + ' min' : 'Off', brightness: v => v + '%'};
+const OFF_LABELS = {youtube_height: v => v + 'p' + (v === 360 ? '  (recommended: plenty for this screen)' : ''), auto_dim_min: v => v ? v + ' min' : 'Never', sleep_timer_min: v => v ? v + ' min' : 'Off', brightness: v => v + '%'};
 function fillSelect(id, key, options, value) {
   const sel = $(id); if (document.activeElement === sel) return;
   sel.innerHTML = ''; for (const o of options) sel.add(new Option(OFF_LABELS[key](o), o)); sel.value = value;
@@ -301,6 +307,7 @@ function renderSettings() {
   fillSelect('setBright', 'brightness', st.options.brightness, st.values.brightness);
   fillSelect('setDim', 'auto_dim_min', st.options.auto_dim_min, st.values.auto_dim_min);
   fillSelect('setSleep', 'sleep_timer_min', st.options.sleep_timer_min, st.values.sleep_timer_min);
+  fillSelect('setYtq', 'youtube_height', st.options.youtube_height, st.values.youtube_height);
   $('setShuffle').checked = !!st.values.shuffle;
 }
 async function saveSetting(key, value) {
@@ -311,6 +318,7 @@ async function saveSetting(key, value) {
 $('setBright').onchange = () => saveSetting('brightness', Number($('setBright').value));
 $('setDim').onchange = () => saveSetting('auto_dim_min', Number($('setDim').value));
 $('setSleep').onchange = () => saveSetting('sleep_timer_min', Number($('setSleep').value));
+$('setYtq').onchange = () => saveSetting('youtube_height', Number($('setYtq').value));
 $('setShuffle').onchange = () => saveSetting('shuffle', $('setShuffle').checked);
 function dur(sec) { const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60); return (d ? d + ' d ' : '') + (h || d ? h + ' h ' : '') + m + ' min'; }
 async function loadStatus() {
@@ -346,6 +354,11 @@ function renderStatic() {
     r.onchange = async () => { try { await api('/api/static/preset', {method: 'POST', body: JSON.stringify({name: p.name})}); say($('staticMsg'), 'Saved. It plays when the TV goes back to playing.', 'ok'); await load(); } catch (e) { say($('staticMsg'), e.message, 'bad'); } };
     lab.append(r, el('span', '', p.label)); box.append(lab);
   }
+  const L = st.lengths, lenBox = $('staticLengths'); lenBox.classList.toggle('hide', !L.applies);
+  for (const [id, key, opts] of [['staticBetween', 'between', L.between_options], ['staticChange', 'change', L.change_options]]) {
+    const sel = $(id); if (document.activeElement === sel) continue;
+    sel.innerHTML = ''; for (const o of opts) sel.add(new Option(o + ' second' + (o === 1 ? '' : 's'), o)); sel.value = L[key];
+  }
   $('staticFfmpegNote').textContent = st.ffmpeg ? '' : 'Changing a clip\'s sound needs ffmpeg, which this TV does not have (YouTube support installs it). You can still use the clip with its own sound.';
   for (const o of $('staticSound').options) if (o.value !== 'own') o.disabled = !st.ffmpeg;
   const names = st.uploads.sounds, cur = $('staticSoundName').value;
@@ -380,6 +393,11 @@ async function putFile(kind, file) {
   if (!res.ok) throw new Error(data.error || ('Error ' + res.status));
   return data;
 }
+async function saveLengths() {
+  try { await api('/api/static/lengths', {method: 'POST', body: JSON.stringify({between: Number($('staticBetween').value), change: Number($('staticChange').value)})}); say($('staticMsg'), 'Saved. It applies when the TV goes back to playing.', 'ok'); await load(); }
+  catch (e) { say($('staticMsg'), e.message, 'bad'); }
+}
+$('staticBetween').onchange = saveLengths; $('staticChange').onchange = saveLengths;
 $('staticUp').onclick = () => $('staticFile').click();
 $('staticFile').onchange = async () => {
   const f = $('staticFile').files[0]; if (!f) return; say($('staticMsg'), 'Sending ' + f.name + ' (' + fmtMB(f.size) + ')...', '');

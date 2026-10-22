@@ -332,7 +332,7 @@ def test_the_real_ytdlp_is_driven_with_safe_arguments(tmp_path, monkeypatch):
     assert yt.download(A, tmp_path, "Title [aaaaaaaaaaa]", lambda f, s: got.append((round(f, 2), s)), threading.Event()) == "Title [aaaaaaaaaaa].mp4"
     cmd = seen["cmd"]
     assert cmd[:2] == ["nice", "-n"] and cmd[cmd.index("--") + 1] == f"https://www.youtube.com/watch?v={A}" and cmd[-2] == "--"
-    assert "--no-playlist" in cmd and any("height<=480" in c for c in cmd) and "--no-update" in cmd
+    assert "--no-playlist" in cmd and any("height<=360" in c for c in cmd) and not any("height<=480" in c for c in cmd) and "--no-update" in cmd
     assert got == [(0.5, "downloading"), (0.99, "joining")]
     assert yt.listing(f"https://youtu.be/{A}").kind == "video"
 
@@ -525,3 +525,36 @@ def test_refresh_needs_ytdlp_and_a_real_channel(root):
     mgr2, _ = make(root)
     with pytest.raises(YouTubeError):
         mgr2.start_refresh("9.nothing")
+
+
+# ---- the quality setting -----------------------------------------------------------------------------------------------
+def test_formats_follow_the_chosen_quality_and_an_odd_value_gets_the_default():
+    from tubeless.youtube import DEFAULT_HEIGHT, FORMAT_JOINED, FORMAT_SINGLE, HEIGHTS, formats
+    assert DEFAULT_HEIGHT == 360 and HEIGHTS == (240, 360, 480)
+    assert "height<=360" in formats(360)[0] and "height<=360" in formats(360)[1] and "height<=240" in formats(240)[0]
+    assert formats(1080) == formats(360) and formats(None) == formats(360)             # never an HD request, whatever it is asked
+    assert (FORMAT_JOINED, FORMAT_SINGLE) == formats(480)                              # the old constants: the highest offered
+
+
+def test_downloads_ask_yt_dlp_for_the_chosen_quality(tmp_path, monkeypatch):
+    import subprocess
+    from tubeless.youtube import YtDlp
+    seen = {}
+
+    class Proc:
+        returncode = 0
+        stdout = iter([])
+        stderr = iter([])
+
+        def wait(self, timeout=None):
+            (tmp_path / "x.mp4").write_bytes(b"x")
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kw: (seen.setdefault("cmd", cmd), Proc())[1])
+    yt = YtDlp("/bin/true")
+    yt.has_ffmpeg = True
+    for height in (360, 240):
+        seen.clear()
+        yt.height = height
+        yt.download("aaaaaaaaaaa", tmp_path, "x", lambda f, s: None, threading.Event())
+        fmt = seen["cmd"][seen["cmd"].index("-f") + 1]
+        assert f"height<={height}" in fmt and "height<=480" not in fmt

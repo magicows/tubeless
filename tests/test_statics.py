@@ -92,16 +92,18 @@ def test_the_channel_change_hold_follows_the_clip_but_never_exceeds_the_usual(tm
     assert mgr.delay(3.0) == 0.3                                            # a quick blank: no 3 second black screen
     clip = put(tmp_path / "data" / "static" / "clip" / "mine.mp4")
     mgr._select({"kind": "upload", "dir": "clip", "name": "mine.mp4"}, 1.5)
-    assert mgr.delay(3.0) == 1.5
+    assert mgr.delay(3.0) == 3.0                                            # your clip: held for the chosen change length (3 s by default)
+    mgr.set_lengths(change=5.0)
+    assert mgr.delay(3.0) == 5.0
     mgr._select({"kind": "upload", "dir": "clip", "name": "mine.mp4"}, 20.0)
-    assert mgr.delay(3.0) == 3.0 and mgr.paths() == (str(clip), str(clip))
+    assert mgr.paths()[0].startswith("edl://") and str(clip) in mgr.paths()[0]
 
 
 def test_a_chosen_clip_that_has_gone_falls_back_to_the_default(tmp_path):
     mgr = manager(tmp_path)
     clip = put(tmp_path / "data" / "static" / "clip" / "mine.mp4")
     mgr._select({"kind": "upload", "dir": "clip", "name": "mine.mp4"}, None)
-    assert mgr.paths()[0] == str(clip)
+    assert str(clip) in mgr.paths()[0]
     clip.unlink()
     assert mgr.paths() == ("/builtin_short.mp4", "/builtin_long.mp4")
     assert mgr.state()["choice"].get("missing") is True
@@ -131,10 +133,10 @@ def test_using_a_clip_with_its_own_sound_needs_no_ffmpeg(tmp_path):
     mgr = manager(tmp_path, ffmpeg="")                                     # "" = no ffmpeg (None would look for the real one)
     mgr.save_upload("clip", "mine.mp4", io.BytesIO(b"v" * 50), 50)
     state = mgr.use("upload", "mine.mp4", "own")
-    assert state["choice"]["label"] == "mine.mp4" and mgr.paths()[0].endswith("mine.mp4")
+    assert state["choice"]["label"] == "mine.mp4" and "mine.mp4" in mgr.paths()[0]
     put(tmp_path / "home" / "pick" / "home.mp4")
     mgr.use("home", "pick/home.mp4", "own")
-    assert mgr.paths()[0] == str((tmp_path / "home" / "pick" / "home.mp4").resolve())
+    assert str((tmp_path / "home" / "pick" / "home.mp4").resolve()) in mgr.paths()[0]
 
 
 def test_changing_a_clips_sound_needs_ffmpeg_and_says_so(tmp_path):
@@ -173,8 +175,8 @@ def test_a_clip_is_converted_once_and_the_new_file_is_what_plays(tmp_path):
     mgr = manager(tmp_path, ffmpeg=fake_ffmpeg(tmp_path))
     mgr.save_upload("clip", "mine.mp4", io.BytesIO(b"v" * 50), 50)
     mgr.use("upload", "mine.mp4", "static")
-    assert mgr.state()["choice"]["label"] == "mine-static-sound.mp4" and mgr.paths()[0].endswith("mine-static-sound.mp4")
-    assert open(mgr.paths()[0]).read() == "converted"
+    assert mgr.state()["choice"]["label"] == "mine-static-sound.mp4" and "mine-static-sound.mp4" in mgr.paths()[0]
+    assert open(tmp_path / "data" / "static" / "clip" / "mine-static-sound.mp4").read() == "converted"
     assert mgr.state()["uploads"]["clips"] == ["mine-static-sound.mp4", "mine.mp4"]       # the original is kept, nothing in the way
 
 
@@ -225,9 +227,9 @@ def test_real_ffmpeg_makes_a_silent_clip_and_a_clip_with_the_static_sound(tmp_pa
     with open(tmp_path / "pretend.mp4", "rb") as f:
         mgr.save_upload("clip", "pretend.mp4", f, (tmp_path / "pretend.mp4").stat().st_size)
     mgr.use("upload", "pretend.mp4", "silent")
-    assert streams(mgr.paths()[0]) == ["video"]
+    assert streams(tmp_path / "data" / "static" / "clip" / "pretend-silent.mp4") == ["video"]
     mgr.use("upload", "pretend.mp4", "static")
-    out = mgr.paths()[0]
+    out = str(tmp_path / "data" / "static" / "clip" / "pretend-static-sound.mp4")
     assert streams(out) == ["audio", "video"]
     length = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out],
                                   capture_output=True, text=True).stdout)
@@ -239,15 +241,17 @@ def test_the_app_plays_the_chosen_clip_between_videos_and_on_channel_change(tmp_
     r = Rig(tmp_path)
     try:
         clip = put(tmp_path / "data" / "static" / "clip" / "mine.mp4")
-        r.app.statics._select({"kind": "upload", "dir": "clip", "name": "mine.mp4"}, 1.0)
-        assert r.app.playlists.static_path == str(clip)
+        r.app.statics._select({"kind": "upload", "dir": "clip", "name": "mine.mp4"}, 20.0)               # a long clip: only the first part plays
+        assert str(clip) in r.app.playlists.static_path and r.app.playlists.static_path.startswith("edl://")
         r.app.start_playback()
         entries = open(r.app.m3u_path).read().splitlines()
-        assert entries[0] == str(clip) and entries.count(str(clip)) == 5          # a clip before each of the five videos
+        between = r.app.statics.paths()[0]
+        assert between.startswith("edl://") and str(clip) in between and between.endswith(",0,0.6")     # the first 0.6 s of the clip
+        assert entries[0] == between and entries.count(between) == 5              # before each of the five videos
         r.player.commands.clear()
         r.app.switch_channel(1)
         loads = [c for c in r.player.commands if c[:1] == ("loadfile",)]
-        assert loads and loads[0][1] == str(clip)                                  # the channel-change static is the chosen clip too
+        assert loads and loads[0][1] == r.app.statics.paths()[1] and loads[0][1].endswith(",0,3")       # up to 3 s when changing channel
         assert r.app.web_state()["static"]["choice"]["label"] == "mine.mp4"
     finally:
         r.stop()
@@ -273,3 +277,49 @@ def test_a_file_with_no_picture_is_refused_as_a_clip_and_one_with_no_sound_as_a_
     with pytest.raises(ValueError) as e:
         mgr.use("upload", "blank.mp4", "own")
     assert "no picture" in str(e.value)
+
+
+# ---- one clip, two lengths ---------------------------------------------------------------------------------------------
+def test_edl_entry_plays_the_first_part_or_repeats_a_short_clip_to_fill_the_time():
+    path = "/home/me/my clip, v2;final.mp4"                                        # spaces, a comma and a semicolon in the name
+    n = len(path.encode())
+    assert statics.edl_entry(path, 0.6, 3.2) == f"edl://%{n}%{path},0,0.6"        # longer than needed: just the first part
+    assert statics.edl_entry(path, 3.0, None) == f"edl://%{n}%{path},0,3"         # length unknown: ask for it, mpv stops at the end
+    segment = f"%{n}%{path},0,"
+    three = statics.edl_entry(path, 3.0, 1.0)                                      # a 1 s clip for 3 s: three times over
+    assert three.count(segment) == 3 and three.endswith(segment + "1") and three.count(segment + "1") == 3
+    parts = statics.edl_entry(path, 2.5, 1.0)
+    assert parts.count(segment) == 3 and parts.endswith(segment + "0.5")           # 1 + 1 + 0.5
+    assert statics.edl_entry("/é/ü.mp4", 1.0, 5.0).startswith(f"edl://%{len('/é/ü.mp4'.encode())}%")      # the length is in bytes
+
+
+def test_the_lengths_default_to_the_original_projects_and_are_chosen_from_a_short_list(tmp_path):
+    mgr = manager(tmp_path)
+    assert mgr.lengths() == (0.6, 3.0)
+    mgr.set_lengths(between=2.0)
+    assert mgr.lengths() == (2.0, 3.0)
+    mgr.set_lengths(change=5.0, between=1.0)
+    assert mgr.lengths() == (1.0, 5.0) and mgr.changes
+    for bad in ({"between": 0.1}, {"change": 99.0}, {"between": 3.5}):
+        with pytest.raises(ValueError):
+            mgr.set_lengths(**bad)
+    assert mgr.lengths() == (1.0, 5.0)                                              # a refused change changes nothing
+
+
+def test_a_clip_shorter_than_the_time_asked_for_is_repeated(tmp_path):
+    mgr = manager(tmp_path)
+    clip = put(tmp_path / "data" / "static" / "clip" / "mine.mp4")
+    mgr._select({"kind": "upload", "dir": "clip", "name": "mine.mp4"}, 1.0)        # a 1 s clip
+    mgr.set_lengths(between=2.0, change=4.0)
+    between, change = mgr.paths()
+    assert between.count(str(clip)) == 2 and change.count(str(clip)) == 4          # twice, and four times
+    assert mgr.state()["lengths"]["applies"] is True
+    mgr.choose_preset("sound")
+    assert mgr.state()["lengths"]["applies"] is False and mgr.paths() == ("/builtin_short.mp4", "/builtin_long.mp4")
+
+
+def test_the_players_stand_in_understands_a_cut_clip_entry():
+    from tubeless.player import FakePlayer
+    p = FakePlayer("/s.mp4", "/l.mp4")
+    assert p.is_static("/s.mp4") and p.is_static("edl://%5%/a.mp4,0,0.6") and not p.is_static("/videos/a.mp4")
+    assert abs(p._dur("edl://%5%/a.mp4,0,1;%5%/a.mp4,0,0.5") - 1.5) < 1e-9

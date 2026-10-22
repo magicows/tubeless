@@ -36,7 +36,7 @@ from . import __version__
 from .updater import UpdateError, Updater
 from .setupweb import SetupServer
 from .web import Session, UploadManager, WebServer, local_ip
-from .youtube import YouTubeManager, YtDlp, find_ytdlp
+from .youtube import DEFAULT_HEIGHT, HEIGHTS, YouTubeManager, YtDlp, find_ytdlp
 from .wifi import HOTSPOT_IP, Wifi, new_hotspot_credentials, wifi_qr_text
 
 log = logging.getLogger(__name__)
@@ -78,6 +78,10 @@ class App:
 
         # remembered settings
         self.shuffle = bool(self.settings.get("shuffle", True))
+        h = self.settings.get("youtube_height", DEFAULT_HEIGHT)
+        self.youtube_height = h if h in HEIGHTS else DEFAULT_HEIGHT
+        if hasattr(player, "youtube_height"):
+            player.youtube_height = self.youtube_height
         order = self.settings.get("channel_order", {})
         self.channel_order = {k: v for k, v in (order if isinstance(order, dict) else {}).items() if v in ("shuffle", "order")}
         b = self.settings.get("brightness", 100)
@@ -1059,7 +1063,10 @@ class App:
         self._show_busy("UPLOAD MODE", ["Starting the upload page..."])      # stopping mpv uncovers whatever was drawn last
         self.uploads = UploadManager(self.library.root)
         session = Session()
-        self.youtube = YouTubeManager(self.library.root, self._ytdlp or YtDlp(find_ytdlp(self.cfg.ytdlp_path)),
+        ytdlp = self._ytdlp or YtDlp(find_ytdlp(self.cfg.ytdlp_path))
+        if hasattr(ytdlp, "height"):
+            ytdlp.height = self.youtube_height                  # downloads at the quality chosen on the page
+        self.youtube = YouTubeManager(self.library.root, ytdlp,
                                       on_change=self._mark_screen_dirty)
         server = WebServer(self.uploads, session, _WebHooks(self), host="0.0.0.0", port=self.cfg.web_port,
                            youtube=self.youtube)
@@ -1416,9 +1423,9 @@ class App:
     # --- settings, status and logs for the web page ------------------------------------------------------------
     def web_settings(self) -> dict:
         return {"values": {"brightness": self.brightness, "shuffle": self.shuffle, "auto_dim_min": self.auto_dim_min,
-                           "sleep_timer_min": self.sleep_timer_min},
+                           "sleep_timer_min": self.sleep_timer_min, "youtube_height": self.youtube_height},
                 "options": {"brightness": list(self.hw.brightness_levels), "auto_dim_min": list(AUTO_DIM_STEPS),
-                            "sleep_timer_min": list(SLEEP_TIMER_STEPS)}}
+                            "sleep_timer_min": list(SLEEP_TIMER_STEPS), "youtube_height": list(HEIGHTS)}}
 
     def set_channel_order(self, channel: str, order: str) -> None:
         """'shuffle', 'order', or 'default' (follow the TV's Shuffle setting) for one channel, from the web page."""
@@ -1448,6 +1455,15 @@ class App:
                 self.brightness, self.dimmed = value, False
                 self.backlight.set(value)
                 self.settings.set(brightness=value)
+            elif key == "youtube_height":
+                self.youtube_height = value
+                self.settings.set(youtube_height=value)
+                if hasattr(self.player, "youtube_height"):
+                    self.player.youtube_height = value                      # streaming picks it up when playback restarts
+                if self._ytdlp is not None and hasattr(self._ytdlp, "height"):
+                    self._ytdlp.height = value
+                if self.youtube is not None and hasattr(self.youtube.yt, "height"):
+                    self.youtube.yt.height = value                          # and new downloads use it straight away
             elif key == "auto_dim_min":
                 self.auto_dim_min = value
                 self.settings.set(auto_dim_min=value)

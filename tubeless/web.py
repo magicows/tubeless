@@ -428,7 +428,7 @@ class WebServer:
                     except ValueError as e:
                         return self._fail(400, str(e))
                     self._json(200, {"ok": True})
-                elif route in ("/api/static/preset", "/api/static/use", "/api/static/delete"):
+                elif route in ("/api/static/preset", "/api/static/use", "/api/static/delete", "/api/static/lengths"):
                     if not self._authed():
                         return
                     data = self._body_json()
@@ -438,6 +438,9 @@ class WebServer:
                     try:
                         if route.endswith("/preset"):
                             st.choose_preset(str(data.get("name", "")))
+                            self._json(200, st.state())
+                        elif route.endswith("/lengths"):
+                            st.set_lengths(data.get("between"), data.get("change"))
                             self._json(200, st.state())
                         elif route.endswith("/use"):
                             self._json(200, st.use(str(data.get("kind", "")), str(data.get("ref", "")), str(data.get("sound", "own")),

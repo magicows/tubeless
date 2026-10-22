@@ -39,6 +39,11 @@ CAP_SECONDS = 5                     # a clip made by the TV is cut to this lengt
 MAX_LISTED, MAX_DEPTH = 200, 3
 SKIP_DIRS = {"tubeless", "node_modules", "site-packages", "__pycache__", "snap"}
 DEFAULT = {"kind": "preset", "name": "sound"}
+# How long your own clip plays: briefly between videos, longer when you change channel (the built-in static has a short and a
+# long clip for this, as the original project did). One clip serves both: the TV plays its first part, or repeats it if it is shorter.
+BETWEEN_OPTIONS = (0.6, 1.0, 2.0, 3.0)
+CHANGE_OPTIONS = (2.0, 3.0, 4.0, 5.0)
+DEFAULT_BETWEEN, DEFAULT_CHANGE = 0.6, 3.0
 
 
 def exts(kind: str) -> tuple:
@@ -130,6 +135,24 @@ def ffmpeg_command(ffmpeg: str, src: str, out: str, sound: str, audio: Optional[
     return cmd
 
 
+def edl_entry(path: str, seconds: float, clip_seconds: Optional[float] = None) -> str:
+    """A playlist entry that mpv plays as a file `seconds` long made from the clip: its first part, or the clip over again if it
+    is shorter than that (static is noise: nobody sees the join). `%n%` gives the path's length in bytes, so commas, spaces and
+    semicolons in a file name can't be misread."""
+    n = len(path.encode("utf-8"))
+
+    def seg(length: float) -> str:
+        return f"%{n}%{path},0,{length:g}"
+
+    if not clip_seconds or clip_seconds >= seconds - 0.02:
+        segments = [seg(seconds)]
+    else:
+        whole = int(seconds // clip_seconds)
+        rest = seconds - whole * clip_seconds
+        segments = [seg(clip_seconds)] * whole + ([seg(rest)] if rest > 0.05 else [])
+    return "edl://" + ";".join(segments)
+
+
 def _stem(name: str) -> str:
     return Path(name).stem[:60] or "clip"
 
@@ -170,26 +193,55 @@ class StaticManager:
             return None
         return p if p.is_file() else None
 
+    def _preset_paths(self, name) -> Tuple[str, str]:
+        if name == "silent":
+            return str(ASSETS_DIR / "static_short_silent.mp4"), str(ASSETS_DIR / "static_long_silent.mp4")
+        if name == "none":
+            return (str(ASSETS_DIR / "static_blank.mp4"),) * 2
+        return self.cfg.short_static, self.cfg.long_static
+
     def paths(self) -> Tuple[str, str]:
-        """(the clip before each video, the clip when you change channel). A choice whose file has gone falls back to the default."""
+        """(what plays before each video, what plays when you change channel): file names for the built-in clips, and for your
+        own clip a playlist entry that plays just the first part of it (see edl_entry). A choice whose file has gone falls back
+        to the default."""
         spec = self._spec()
         if spec["kind"] == "preset":
-            name = spec.get("name")
-            if name == "silent":
-                return str(ASSETS_DIR / "static_short_silent.mp4"), str(ASSETS_DIR / "static_long_silent.mp4")
-            if name == "none":
-                return (str(ASSETS_DIR / "static_blank.mp4"),) * 2
-            return self.cfg.short_static, self.cfg.long_static
+            return self._preset_paths(spec.get("name"))
         p = self._resolve(spec)
-        return (str(p), str(p)) if p else (self.cfg.short_static, self.cfg.long_static)
+        if not p:
+            return self.cfg.short_static, self.cfg.long_static
+        clip = self.settings.get("static_seconds")
+        clip = float(clip) if isinstance(clip, (int, float)) and clip > 0 else None
+        between, change = self.lengths()
+        return edl_entry(str(p), between, clip), edl_entry(str(p), change, clip)
+
+    def lengths(self) -> Tuple[float, float]:
+        """(seconds of your own clip between videos, seconds when you change channel)."""
+        between, change = self.settings.get("static_between"), self.settings.get("static_change")
+        return (between if between in BETWEEN_OPTIONS else DEFAULT_BETWEEN, change if change in CHANGE_OPTIONS else DEFAULT_CHANGE)
 
     def delay(self, normal: float) -> float:
-        """How long the channel-change static holds the screen before the new channel loads: the clip's length, but no more than usual."""
+        """How long the channel-change static holds the screen before the new channel loads."""
         spec = self._spec()
         if spec["kind"] == "preset":
             return 0.3 if spec.get("name") == "none" else normal
-        secs = self.settings.get("static_seconds")
-        return min(float(secs), normal) if isinstance(secs, (int, float)) and secs > 0 else normal
+        return self.lengths()[1] if self._resolve(spec) else normal
+
+    def set_lengths(self, between=None, change=None) -> None:
+        if between is not None:
+            if between not in BETWEEN_OPTIONS:
+                raise ValueError("Choose one of the lengths offered for between videos.")
+        if change is not None:
+            if change not in CHANGE_OPTIONS:
+                raise ValueError("Choose one of the lengths offered for changing channel.")
+        updates = {}
+        if between is not None:
+            updates["static_between"] = float(between)
+        if change is not None:
+            updates["static_change"] = float(change)
+        if updates:
+            self.settings.set(**updates)
+            self.on_change()
 
     # --- what the page shows ---------------------------------------------------------------------
     def state(self) -> dict:
@@ -206,11 +258,17 @@ class StaticManager:
                 listing[kind + "s"] = sorted(f.name for f in self._dir(kind).iterdir() if f.is_file() and not f.name.startswith("."))
             except OSError:
                 listing[kind + "s"] = []
+        between, change = self.lengths()
         return {"choice": choice, "presets": [{"name": k, "label": v} for k, v in PRESETS.items()],
-                "ffmpeg": bool(self.ffmpeg), "uploads": listing}
+                "ffmpeg": bool(self.ffmpeg), "uploads": listing,
+                "lengths": {"between": between, "change": change, "between_options": list(BETWEEN_OPTIONS),
+                            "change_options": list(CHANGE_OPTIONS), "applies": choice["kind"] != "preset"}}
 
     def current_file(self) -> Path:
-        return Path(self.paths()[0])
+        """The actual file of the chosen clip (for the page's preview), not the playlist entry made from it."""
+        spec = self._spec()
+        p = self._resolve(spec) if spec["kind"] != "preset" else None
+        return p if p else Path(self._preset_paths(spec.get("name"))[1])
 
     def home_files(self, kind: str) -> List[dict]:
         return list_home(self.home, self.root, kind)

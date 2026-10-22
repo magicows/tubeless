@@ -93,6 +93,7 @@ class MpvPlayer:
     def __init__(self, cfg: Config, hw: Hardware):
         self.cfg, self.hw = cfg, hw
         self.proc: Optional[subprocess.Popen] = None
+        self.youtube_height = 360                # the quality streamed from YouTube (set by the app from its settings)
         self.started_at = 0.0                    # when mpv was last started: its control socket takes a moment to appear
         self.ipc = MpvIPC(cfg.mpv_socket)
         shm = Path("/dev/shm")
@@ -127,11 +128,12 @@ class MpvPlayer:
 
     def _youtube_options(self) -> list:
         """So a YouTube link in a playlist is played (as 480p H.264) by the yt-dlp the user installed."""
-        from .youtube import FORMAT_JOINED, FORMAT_SINGLE, find_ytdlp
+        from .youtube import DEFAULT_HEIGHT, find_ytdlp, formats
         path = find_ytdlp(getattr(self.cfg, "ytdlp_path", ""))
         if not path:
             return ["--ytdl=no"]
-        return ["--ytdl=yes", f"--ytdl-format={FORMAT_JOINED}/{FORMAT_SINGLE}", f"--script-opts=ytdl_hook-ytdl_path={path}"]
+        joined, single = formats(getattr(self, "youtube_height", DEFAULT_HEIGHT))
+        return ["--ytdl=yes", f"--ytdl-format={joined}/{single}", f"--script-opts=ytdl_hook-ytdl_path={path}"]
 
     def _open_log(self):
         """Append to mpv.log, starting over once it passes 512 KB."""
@@ -197,6 +199,7 @@ class FakePlayer:
                  clock: Callable[[], float] = time.monotonic, speed: float = 1.0, url_delay: float = 0.0,
                  url_fail: Tuple[str, ...] = ()):
         self.short_static, self.long_static = short_static, long_static
+        self.youtube_height = 360                                      # like MpvPlayer: the app sets it from its settings
         self.url_delay, self.url_fail = url_delay, tuple(url_fail)     # network entries load slowly; some never do
         self._stall_until, self._will_fail = 0.0, False
         self.duration_of = duration_of
@@ -219,12 +222,18 @@ class FakePlayer:
             return 0.64
         if path == self.long_static:
             return 3.2
+        if path.startswith("edl://"):                                  # a made-up file: the lengths of its segments, added up
+            import re
+            return sum(float(x) for x in re.findall(r",0,([0-9.]+)(?:;|$)", path)) or 1.0
         return self.duration_of(path)
+
+    def is_static(self, path: str) -> bool:
+        return path in (self.short_static, self.long_static) or path.startswith("edl://")
 
     def _arm(self) -> None:
         """Entering a playlist entry: a network address has to load first, like mpv resolving a YouTube link."""
         cur = self.playlist[self.pos] if self.playlist else ""
-        if "://" in cur:
+        if "://" in cur and not cur.startswith("edl://"):
             self._stall_until, self._will_fail = self.clock() + self.url_delay, any(k in cur for k in self.url_fail)
         else:
             self._stall_until, self._will_fail = 0.0, False

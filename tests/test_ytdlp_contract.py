@@ -43,6 +43,18 @@ def test_the_download_format_picks_480p_h264_video_with_aac_sound():
     assert ids(choose(TYPICAL, f"{youtube.FORMAT_JOINED}/{youtube.FORMAT_SINGLE}")) == ["135", "140"]
 
 
+@pytest.mark.parametrize("height,expected", [(240, ["133", "140"]), (360, ["134", "140"]), (480, ["135", "140"])])
+def test_each_quality_picks_the_best_h264_video_up_to_that_height(height, expected):
+    joined, single = youtube.formats(height)
+    assert ids(choose(TYPICAL, f"{joined}/{single}")) == expected
+
+
+def test_a_quality_that_the_video_lacks_falls_back_to_the_best_below_it():
+    no_360 = [f for f in TYPICAL if f["format_id"] != "134"]
+    joined, single = youtube.formats(360)
+    assert ids(choose(no_360, f"{joined}/{single}")) == ["133", "140"]                 # 240p, not 480p
+
+
 def test_it_never_picks_vp9_av1_or_60_fps_even_when_they_are_the_only_big_ones():
     only_hd = [f for f in TYPICAL if f["format_id"] in ("140", "298", "299", "244", "397")]
     got = choose(only_hd, f"{youtube.FORMAT_JOINED}/{youtube.FORMAT_SINGLE}")
