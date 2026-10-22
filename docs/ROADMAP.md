@@ -38,6 +38,10 @@
   and checked against pinned SHA-256s, `config.txt`/`cmdline.txt` edits with diff + backups, console + pigpiod, services, a narrow
   sudoers rule; idempotent, `--dry-run`. Run end to end on the Trixie trial TV (a from-blank-card run is still to do)
 - [x] Trial of Debian 13 (Trixie): 24/24 on-TV checks
+- [x] Web companion settings, status and log, YouTube quality (360p default), yt-dlp updater, new-video detection, update from a release
+- [x] "Technical difficulties" picture, one static clip with two lengths, per-channel play order
+- [x] Wi-Fi guard (router ping, chip reload, one self-restart), health notes in the log, stream timeouts
+- [x] Faster YouTube changeovers: the next video's address is worked out in the background (on by default, v0.1.6)
 
 ## Next
 
@@ -58,8 +62,10 @@
    the builder set the TV name, boot greeting, YouTube yes/no and the standby picture while the install runs. It writes `config.json`, which the
    later steps read. Same PIN idea as the upload page, printed in the terminal. Smaller step first: `--greeting` flag, and `get.sh` asking for
    name, greeting and YouTube before it starts.
-9. **Channel sources** (see below), after the library index.
-10. **Themes** (see below). Could also be picked on the install-time page.
+9. **Streaming after a reboot** (known gap): a streaming channel can run through several videos before Wi-Fi is up (three were skipped with
+   "No Wi-Fi" in one test). Wait for the network, or retry the same video instead of moving on.
+10. **Channel sources** (see below), after the library index.
+11. **Themes** (see below). Could also be picked on the install-time page.
 
 ## Channel sources (idea; needs the library index and the web companion)
 

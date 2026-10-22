@@ -20,7 +20,11 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
   among the ones you haven't seen.
 * **Resume.** It returns to the right episode and the right place in it, even after you pull the plug.
 * **No keyboard on the TV.** The Wi-Fi password, the TV name and YouTube links all go through a web page on your phone.
-* **YouTube channels** (optional): playlists and single videos, downloaded to the TV or streamed.
+* **YouTube channels** (optional): playlists and single videos, downloaded to the TV or streamed, at a quality you choose (360p by default).
+* **Looks after itself.** If the picture stalls or a stream hangs the TV restarts the player and shows a "technical difficulties"
+  picture meanwhile; if the Wi-Fi chip locks up it reloads it, and restarts the TV once as a last resort (see
+  [Wi-Fi chip and the slower bus clock](#wi-fi-chip-and-the-slower-bus-clock)). Once a minute it writes a health note to the log (power
+  flags, temperature, load, free memory, Wi-Fi signal), so a stutter can be lined up with what the Pi was doing.
 * **Menu:** pause, next and previous, brightness, channels, and under Settings: shuffle, sleep timer, auto-dim,
   touch calibration, upload, Wi-Fi setup, shut down.
 * **Dimming.** A paused picture dims after a minute untouched. Auto-dim (2, 5 or 10 minutes, or off) dims a playing one. A touch
@@ -67,11 +71,14 @@ don't want. Later you can paste another playlist, or one video, and it merges in
   <img src="docs/images/phone-youtube-channel.png" alt="A YouTube channel with downloaded videos and one problem" width="230">
 </p>
 
-* **Download to the TV** (the default). The TV fetches each video at 480p or lower, then plays it like any other file. It works
+* **Download to the TV** (the default). The TV fetches each video at the quality you chose (360p by default), then plays it like any other file. It works
   with no Wi-Fi. Downloads run one at a time while the phone page is open, and the TV shows the progress.
-* **Stream** (untick the box). Nothing is stored. Each video loads from YouTube when its turn comes, which takes about 10 seconds on a
-  Zero 2 W, and the TV says "Loading from YouTube". If a video can't be played the TV says why and moves on. Fix or delete the channel on
-  the phone page.
+* **Stream** (untick the box). Nothing is stored. Each video loads from YouTube when its turn comes, and the TV says "Loading from
+  YouTube". The first one takes about 12 seconds on a Zero 2 W. After that, while a video plays the TV works out the next one's address in
+  the background, so the changeover is usually quick (the setting is **Faster YouTube changeovers**, on by default; it costs a little
+  memory and processing, and stays off on an mpv older than 0.38). Swiping back to an earlier video is not prepared in advance, so it
+  takes the full 12 seconds. If a video can't be played the TV says why and moves on. Fix or delete the channel on the phone page.
+  A live stream can't be added.
 * Public and unlisted playlists only. There is no YouTube sign-in.
 
 **New videos in your playlists.** Each time the upload page starts, the TV looks through the playlists your YouTube channels were built
@@ -109,6 +116,45 @@ new ones work. A TV that has never had Wi-Fi starts setup by itself. A TV that h
 it works fine offline. Start setup any time from Settings > Wi-Fi setup. Hold the screen to cancel.
 
 This uses NetworkManager, so it needs Raspberry Pi OS Bookworm or Trixie. It isn't available on Bullseye.
+
+## Wi-Fi chip and the slower bus clock
+
+*For information. Your mileage may vary.*
+
+**What.** One line in the Pi's boot configuration that runs the Wi-Fi chip's data bus at 25 MHz instead of its default 50 MHz:
+
+```
+# /boot/firmware/config.txt  (on Bullseye: /boot/config.txt)
+dtparam=sdio_overclock=25
+```
+
+Then reboot. To undo it, delete the line and reboot. The installer does **not** add it for you: it is a manual change.
+
+**Why.** The Zero 2 W's Wi-Fi chip (a Broadcom BCM43430) sits on an SDIO bus. On the author's TV, streaming from YouTube would sometimes
+make that bus corrupt data. The picture froze, then the Wi-Fi went away completely and only a restart brought it back. The kernel log had
+`brcmfmac` bus errors just beforehand. It happened on a battery supply and on mains, with the power flags clean, so it wasn't a supply
+problem. Slowing the bus made it stop: with the line in place the TV streamed for hours (over 25 videos in a row) with no bus errors. We
+haven't proven why it works. The usual suspect is a bus running right at its timing limit, which depends on the board, the wiring and the signal, so another
+TV may not have the problem at all.
+
+Tubeless also defends against it without the line. It checks every so often that the router answers a ping, reloads the Wi-Fi chip if
+it doesn't, and restarts the TV once per boot if that fails (never while you are uploading, and only if the network had worked). That brings
+the TV back, but you see a stall first. The slower clock avoids the stall.
+
+**Does it make Wi-Fi slower?** In theory it halves the bus's ceiling, to roughly 50 Mbit/s in practice. This chip's radio (single
+antenna, 2.4 GHz) usually manages 20 to 30 Mbit/s, so you shouldn't notice. We haven't measured it. Uploads are more likely held back by
+the SD card and by ffmpeg.
+
+**Where.** The line goes in `config.txt` on the boot partition (`/boot/firmware/` on Bookworm and Trixie), as a plain `dtparam`. Don't use
+`dtoverlay=sdio,sdio_overclock=25`, which looks similar: that overlay moves the SDIO bus onto GPIO pins 22 to 27, and on this build
+those pins drive the display, so the TV won't boot. If that has happened, take the card out, remove the line from `config.txt` on
+your computer and put it back.
+
+To see whether a TV has the problem, look for bus errors in the log after a stall:
+
+```
+journalctl -k | grep -i brcmfmac
+```
 
 ## Install on a fresh Pi
 
@@ -189,7 +235,7 @@ Open <http://127.0.0.1:8765/>. Useful flags: `--fresh` (first-run calibration), 
 ## Development
 
 ```
-.venv/bin/python -m pytest        # about 280 tests, including whole-app tests driven by synthetic touches
+.venv/bin/python -m pytest        # about 440 tests, including whole-app tests driven by synthetic touches
 python3 tools/screenshots.py      # regenerates the pictures in docs/images (needs playwright and Chrome)
 ```
 
