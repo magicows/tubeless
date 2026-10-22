@@ -2,7 +2,8 @@
 Channels (folders of videos), and the playlist for each one.
 
 Playlist layout is  static, video, static, video, ...  so every video has a static
-burst in front of it.
+burst in front of it. (A channel that streams from YouTube has just the videos, so mpv can
+open the next one while the current one plays: see Library.static_between.)
 
 Shuffling is "non-repeating": a channel's shuffled order is saved, and you work
 through it in order. It is only reshuffled when you have been through all of it
@@ -91,6 +92,12 @@ class Library:
             position[STREAM_PREFIX + item["id"]] = n
         return sorted(rels, key=lambda r: (position.get(r, 10 ** 9), r))
 
+    def static_between(self, channel: Channel) -> bool:
+        """Is there a static clip in front of each video on this channel? Not on one that streams from YouTube: with nothing in
+        between, mpv can look up and open the NEXT video while the current one plays, so the gap between videos is a second or
+        two instead of the 8 to 10 seconds it takes to ask YouTube and open the stream from cold."""
+        return not (ChannelFile.exists(Path(channel.path)) and ChannelFile.load(Path(channel.path)).mode == "stream")
+
     def has_videos(self, channel: Channel) -> bool:
         for _, dirnames, files in os.walk(channel.path):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -133,6 +140,12 @@ class Plan:
     index: int                  # the episode you are on
     cycle: int = 0
     shuffle: bool = True
+    static: bool = True         # a static clip in front of every video? (not on a channel that streams from YouTube: see Library.static_between)
+
+    @property
+    def stride(self) -> int:
+        """Playlist entries per video: 2 with a static clip in front of each, 1 without."""
+        return 2 if self.static else 1
 
     @property
     def rotated(self) -> List[str]:
@@ -207,7 +220,7 @@ class Playlists:
         else:
             order = self.library.in_order(channel, on_disk)          # in order simply tracks the disk
         index = order.index(current) if current in order else 0
-        plan = Plan(channel, order, index, cycle, shuffle)
+        plan = Plan(channel, order, index, cycle, shuffle, static=self.library.static_between(channel))
         self._save(plan)
         return plan
 
@@ -219,7 +232,7 @@ class Playlists:
         last = self.progress(channel).get("current")
         saved = self.store.load(self._file(channel), None) or {}
         order = self._shuffled(on_disk, avoid_first=last) if shuffle else self.library.in_order(channel, on_disk)
-        plan = Plan(channel, order, 0, int(saved.get("cycle", 0)) + 1, shuffle)
+        plan = Plan(channel, order, 0, int(saved.get("cycle", 0)) + 1, shuffle, static=self.library.static_between(channel))
         self._save(plan)
         self.set_progress(channel, order[0], 0.0)
         return plan
@@ -230,10 +243,11 @@ class Playlists:
 
     # --- what mpv plays ----------------------------------------------------------
     def entries(self, plan: Plan) -> List[str]:
-        """static, video, static, video ... starting at the current episode."""
+        """static, video, static, video ... starting at the current episode (just the videos on a channel with no static)."""
         out: List[str] = []
         for rel in plan.rotated:
-            out.append(self.static_path)
+            if plan.static:
+                out.append(self.static_path)
             out.append(self.library.abspath(plan.channel, rel))
         return out
 
@@ -246,8 +260,10 @@ class Playlists:
 
     def episode_at(self, plan: Plan, playlist_pos: int) -> Optional[str]:
         """Relative path of the episode at an mpv playlist position (None for a static)."""
-        if playlist_pos is None or playlist_pos % 2 == 0:
+        if playlist_pos is None:
+            return None
+        if plan.static and playlist_pos % 2 == 0:
             return None
         rotated = plan.rotated
-        i = (playlist_pos - 1) // 2
+        i = (playlist_pos - 1) // 2 if plan.static else playlist_pos
         return rotated[i] if 0 <= i < len(rotated) else None

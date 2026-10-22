@@ -406,8 +406,17 @@ class App:
         if self.player.get("pause"):
             self.save_progress_now()
 
+    def _on_static(self) -> bool:
+        """Is the player showing a static clip right now? (Needed on a channel with no static between videos, where the position
+        alone can't tell the channel-change static from a video.)"""
+        path = self.player.get("path")
+        return bool(path) and path in self.statics.paths()
+
     def skip_video(self, direction: int) -> None:
-        target = skip_target(self.player.get("playlist-pos"), self.player.get("playlist-count"), direction)
+        static = self.plan.static if self.plan is not None else True
+        if not static and self._on_static():
+            return                                           # still on the channel-change static: nothing to skip yet
+        target = skip_target(self.player.get("playlist-pos"), self.player.get("playlist-count"), direction, static)
         if target is None:
             return
         if target[0] == "end":
@@ -893,7 +902,7 @@ class App:
                     # The player knows whether the playlist played through (exit status 0); fall back to where we last saw it.
                     # A player that died within seconds of starting did not play anything through, whatever it says.
                     finished = self._fast_restarts == 0 and (bool(getattr(self.player, "finished_normally", lambda: False)()) or (
-                        pos is not None and count is not None and pos >= count - 2))
+                        pos is not None and count is not None and pos >= count - (self.plan.stride if self.plan else 2)))
                     log.info("player is not running (%s) - restarting", "playlist finished" if finished else "crashed")
                     if self._fast_restarts >= 3:
                         log.warning("the player keeps stopping straight after it starts; waiting %.0f s between restarts "
@@ -957,6 +966,7 @@ class App:
         if self.player.get("time-pos") is not None:
             if not cur["loaded"]:
                 cur["loaded"] = True
+                log.info("stream started playing %.1f s after the TV reached it", now - cur["since"])
                 if cur["shown"] and not self.menu_open:
                     self._clear_overlay()
         elif not cur["loaded"] and not cur["shown"] and now - cur["since"] > self.stream_notice_after and not self.menu_open and self.mode == "play":
@@ -1005,7 +1015,7 @@ class App:
         if pos is None:
             return
         self._last_pos = (pos, count)
-        rel = self.playlists.episode_at(self.plan, pos)
+        rel = None if self._on_static() else self.playlists.episode_at(self.plan, pos)
         if self._watch_stream(rel):
             return                                              # the player was restarted: what we just read is out of date
         if rel is None:
