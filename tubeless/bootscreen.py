@@ -23,7 +23,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 from PIL import Image, ImageDraw
 
-from . import fonts
+from . import daynight, fonts
 from .config import Config, expand
 from .hardware import Hardware
 from .library import Library
@@ -334,8 +334,8 @@ def read_brightness(cfg: Config, hw: Hardware) -> int:
     for path in (cfg.data / "settings.json", expand(cfg.legacy_state_file)):
         try:
             with open(path) as f:
-                value = json.load(f).get("brightness", 100)
-            return value if value in hw.brightness_levels else 100
+                data = json.load(f)
+            return daynight.level_from_settings(data, hw.brightness_levels, synced=daynight.clock_synced())          # the night level if it is night, that is switched on and the clock is set
         except (OSError, ValueError):
             continue
     return 100

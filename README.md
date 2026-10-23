@@ -30,6 +30,13 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
   **upload and settings mode**; each asks for a second tap within a few seconds before it does anything.
 * **Dimming.** A paused picture dims after a minute untouched. Auto-dim (2, 5 or 10 minutes, or off) dims a playing one. A touch
   wakes the screen and does nothing else.
+* **Dim at night** (optional, off until you switch it on): full brightness by day, then a fade down to the night level (25% unless you
+  choose another) over half an hour from sunset, and back up before sunrise, like a Mac's day and night cycle. The TV has no GPS, so give
+  it a place on the upload page: type a latitude and longitude, or press *Use my time zone's city* (the TV's own time zone, good to a quarter
+  of an hour), or *Use this device's location* (browsers only allow that on https pages, so it usually can't work on the TV's plain http
+  page). Without a place it uses two times you set (21:00 to 07:00 to begin with), and so does somewhere the sun doesn't set. The Pi has
+  no battery-backed clock, so dimming waits until the TV has set its clock from the network (it needs Wi-Fi once per start-up; after that it
+  keeps working if the Wi-Fi drops). The menu's brightness row changes the night level at night and the daytime one by day.
 * **Boot screen** with a live checklist of what is starting up, and a name and wake-up message you choose (on the upload page).
 
 ## Get videos onto the TV

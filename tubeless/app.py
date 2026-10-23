@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import qr as qrcodes
-from . import render, themes
+from . import daynight, render, themes
 from .config import Config, expand, set_config_value, user_config_path
 from .gestures import GestureRecognizer
 from . import health
@@ -96,7 +96,11 @@ class App:
         order = self.settings.get("channel_order", {})
         self.channel_order = {k: v for k, v in (order if isinstance(order, dict) else {}).items() if v in ("shuffle", "order")}
         b = self.settings.get("brightness", 100)
-        self.brightness = b if b in hw.brightness_levels else hw.brightness_levels[-1]
+        self.brightness = b if b in hw.brightness_levels else hw.brightness_levels[-1]       # the daytime level
+        self.night = daynight.Night.from_settings(self.settings.get, hw.brightness_levels)      # dimming at night (opt in; see daynight.py)
+        self._night_checked = 0.0
+        self.clock_synced = daynight.clock_synced          # asked now and then; swapped in tests
+        self._clock_ok_until, self._clock_ok = 0.0, False
         self.auto_dim_min = int(self.settings.get("auto_dim_min", 0))
         aff = self.settings.get("touch_affine")
         self.affine = tuple(tuple(r) for r in aff) if aff else hw.touch_affine
@@ -236,7 +240,7 @@ class App:
         if self.audio is not None:
             self.audio.start()
         self.backlight.start()
-        self.backlight.set(self.brightness)
+        self.backlight.set(self.current_brightness())
         channels = self.channels()
         saved = self.settings.get("channel")
         names = [c.name for c in channels]
@@ -474,11 +478,44 @@ class App:
     # ─────────────────────────────────────────
     #  Brightness, sleep, dim
     # ─────────────────────────────────────────
+    def _clock_trusted(self, now: float) -> bool:
+        """Is the time of day to be believed? Only once the clock has been set from the network this time round (the Pi has no
+        battery-backed clock). Once it has been, it stays trusted for the rest of the boot, even if the Wi-Fi drops."""
+        if self._clock_ok:
+            return True
+        if now >= self._clock_ok_until:
+            self._clock_ok = bool(self.clock_synced())
+            self._clock_ok_until = now + 30.0
+        return self._clock_ok
+
+    def current_brightness(self, now: Optional[float] = None) -> int:
+        """What the backlight should be at: the daytime level, or the night level (fading at each end) if dimming at night is on
+        and the clock can be trusted."""
+        now = time.time() if now is None else now
+        if not self.night.enabled or not self._clock_trusted(now):
+            return self.brightness
+        return self.night.level_at(self.brightness, now)
+
     def cycle_brightness(self) -> None:
-        self.brightness = next_step(self.hw.brightness_levels, self.brightness)
-        self.backlight.set(self.brightness)
+        """The menu's brightness row steps the level for the time of day it is: the night level at night, the daytime one otherwise."""
+        if self.night.enabled and self._clock_trusted(time.time()) and self.night.is_night(time.time()):
+            self.night.level = next_step(self.hw.brightness_levels, self.night.level)
+            self.settings.set(night_brightness=self.night.level)
+        else:
+            self.brightness = next_step(self.hw.brightness_levels, self.brightness)
+            self.settings.set(brightness=self.brightness)
         self.dimmed = False
-        self.settings.set(brightness=self.brightness)
+        self.backlight.set(self.current_brightness())
+
+    def _night_step(self, now: float) -> None:
+        """Once a half minute: follow the day and night fade."""
+        if now - self._night_checked < 30.0:
+            return
+        self._night_checked = now
+        if self.mode != "standby" and not self.dimmed:
+            level = self.current_brightness(now)
+            if level != getattr(self.backlight, "percent", None):
+                self.backlight.set(level)
 
     def enter_standby(self) -> None:
         log.info("standby")
@@ -498,7 +535,7 @@ class App:
                 self.cmd("set_property", "pause", False)
             self.mode = "play"
         self.dimmed = False
-        self.backlight.set(self.brightness)
+        self.backlight.set(self.current_brightness())
         self._waking = False
 
     def _tick(self) -> None:
@@ -512,7 +549,8 @@ class App:
             return
         if self.mode == "play" and not self.dimmed and self._should_dim(now):
             self.dimmed = True
-            self.backlight.set(min(self.brightness, DIM_LEVEL))
+            self.backlight.set(min(self.current_brightness(now), DIM_LEVEL))
+        self._night_step(now)
 
     def _should_dim(self, now: float) -> bool:
         """Untouched for long enough: a paused picture dims soon (a still image burns the eye, and the battery);
@@ -550,7 +588,7 @@ class App:
         channels = self.channels()
         shuffling = self.shuffle_for(channels[self.channel_index]) if 0 <= self.channel_index < len(channels) else self.shuffle
         return MenuContext(
-            paused=bool(self.player.get("pause")), brightness=self.brightness, shuffle=shuffling,
+            paused=bool(self.player.get("pause")), brightness=self.current_brightness(), shuffle=shuffling,
             channels=[c.label for c in channels], current_channel=self.channel_index,
             sleep_timer_min=self.sleep_timer_min, auto_dim_min=self.auto_dim_min,
             confirm_shutdown=time.time() < self.confirm_shutdown_until,
@@ -1610,10 +1648,15 @@ class App:
     def web_settings(self) -> dict:
         return {"values": {"brightness": self.brightness, "shuffle": self.shuffle, "auto_dim_min": self.auto_dim_min,
                            "sleep_timer_min": self.sleep_timer_min, "youtube_height": self.youtube_height,
-                           "youtube_lookahead": self.lookahead_enabled, "theme": self.theme_id},
+                           "youtube_lookahead": self.lookahead_enabled, "theme": self.theme_id,
+                           "night_mode": self.night.enabled, "night_brightness": self.night.level, "night_schedule": self.night.mode,
+                           "night_location": ("%s, %s" % self.night.location) if self.night.location else "",
+                           "night_from": daynight.format_clock(self.night.start), "night_to": daynight.format_clock(self.night.end)},
+                "night": dict(self.night.describe(time.time()), clock=self._clock_trusted(time.time())),
                 "options": {"brightness": list(self.hw.brightness_levels), "auto_dim_min": list(AUTO_DIM_STEPS),
                             "sleep_timer_min": list(SLEEP_TIMER_STEPS), "youtube_height": list(HEIGHTS),
-                            "theme": list(themes.all_themes(self.custom_themes))}}
+                            "theme": list(themes.all_themes(self.custom_themes)), "night_brightness": list(self.hw.brightness_levels),
+                            "night_schedule": list(daynight.MODES)}}
 
     def set_channel_order(self, channel: str, order: str) -> None:
         """'shuffle', 'order', or 'default' (follow the TV's Shuffle setting) for one channel, from the web page."""
@@ -1636,6 +1679,22 @@ class App:
                 raise ValueError("That is on or off.")
             self.lookahead_enabled = value
             self.settings.set(youtube_lookahead=value)
+        elif key in ("night_mode", "night_location", "night_from", "night_to"):
+            if key == "night_mode":
+                if not isinstance(value, bool):
+                    raise ValueError("That is on or off.")
+                self.night.enabled = value
+                self.settings.set(night_mode=value)
+            elif key == "night_location":
+                loc = daynight.parse_location(value)                      # raises ValueError with a message for the page
+                self.night.location = loc
+                self.settings.set(night_location=list(loc) if loc else None)
+            else:
+                minutes = daynight.parse_clock(value)
+                setattr(self.night, "start" if key == "night_from" else "end", minutes)
+                self.settings.set(**{key: daynight.format_clock(minutes)})
+            self._night_checked = 0.0
+            self._night_step(time.time())
         elif key == "shuffle":
             if not isinstance(value, bool):
                 raise ValueError("Shuffle is on or off.")
@@ -1646,8 +1705,17 @@ class App:
                 raise ValueError(f"{value!r} isn't one of the choices for that setting.")
             if key == "brightness":
                 self.brightness, self.dimmed = value, False
-                self.backlight.set(value)
+                self.backlight.set(self.current_brightness())
                 self.settings.set(brightness=value)
+            elif key == "night_brightness":
+                self.night.level, self.dimmed = value, False
+                self.backlight.set(self.current_brightness())
+                self.settings.set(night_brightness=value)
+            elif key == "night_schedule":
+                self.night.mode = value
+                self.settings.set(night_schedule=value)
+                self._night_checked = 0.0
+                self._night_step(time.time())
             elif key == "youtube_height":
                 self.youtube_height = value
                 self.settings.set(youtube_height=value)
@@ -1777,6 +1845,10 @@ class _WebHooks:
 
     def theme_style(self) -> str:
         return self.app.theme_style()
+
+    def timezone_location(self) -> Optional[dict]:
+        found = daynight.timezone_location()
+        return {"zone": found[0], "location": "%s, %s" % found[1]} if found else None
 
     def add_palette(self, name: str, text: str, light: bool, brutal: bool) -> dict:
         return self.app.add_palette(name, text, light, brutal)

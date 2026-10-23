@@ -227,6 +227,7 @@ class WebServer:
     hooks (provided by the app):
         state() -> dict                       name, channels, ...
         set_name(name) -> str                 raises ValueError("why not")
+        timezone_location() -> dict | None    {'zone', 'location': 'lat, lon'} for the TV's time zone's main city
         theme_css() / theme_style()           the chosen theme, for the page (the colours as CSS; 'soft' or 'brutal')
         add_palette(name, text, light, brutal) -> dict      a pasted palette, saved and chosen; delete_palette(id); raise ValueError("why not")
         set_greeting(text) -> str             the boot screen's typed line; blank = the placeholder; raises ValueError("why not")
@@ -360,6 +361,13 @@ class WebServer:
                             self._send(200, path.read_bytes(), ctype)
                         except OSError:
                             self._fail(404, "No clip.")
+                elif route == "/api/timezone-location":
+                    if self._authed():
+                        found = server.hooks.timezone_location()
+                        if found is None:
+                            self._fail(404, "The TV can't tell where its time zone is. Type the coordinates instead.")
+                        else:
+                            self._json(200, found)
                 elif route == "/api/status":
                     if self._authed():
                         self._json(200, server.hooks.status())

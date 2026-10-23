@@ -64,6 +64,7 @@ class Rig:
         self.app.progress_save_every = 0.1
         self.app.tracker_every = 0.05
         self.app.config_path = tmp_path / "config.json"
+        self.app.clock_synced = lambda: True                 # the real answer depends on the machine running the tests
         self.display = self.backend.display
         # what the touch panel *really* reports: by default what the app already assumes
         self.panel_affine = panel_affine or HW.touch_affine

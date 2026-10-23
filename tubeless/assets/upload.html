@@ -185,6 +185,22 @@
       <section class="card">
         <h2>Settings</h2>
         <label for="setBright">Brightness</label><select id="setBright"></select>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px"><input type="checkbox" id="setNight" style="width:auto;margin-top:3px"> <span>Dim at night <small>Full brightness by day, then fading down to the night level over half an hour as it gets dark, and back up at dawn.</small></span></label>
+        <div id="nightBox" class="hide" style="margin-top:8px">
+          <label for="setNightLevel">Night brightness</label><select id="setNightLevel"></select>
+          <label for="setNightMode" style="margin-top:10px">Night starts and ends</label><select id="setNightMode"></select>
+          <div id="nightSun" class="hide" style="margin-top:10px">
+            <label for="setNightLoc">Where the TV is (latitude, longitude)</label>
+            <div class="row"><input id="setNightLoc" type="text" autocomplete="off" placeholder="51.5072, -0.1276"><button id="saveNightLoc" class="ghost">Save</button></div>
+            <div class="toolbar"><button class="ghost" id="useLocation">Use this device's location</button><button class="ghost" id="useZone">Use my time zone's city</button></div>
+            <small>Or look your town up on any map site and copy its coordinates (south and west are negative). Without a location the set times below are used. Browsers only share their location with secure (https) pages, so the first button usually can't work here; the second needs nothing and is good to within a quarter of an hour or so.</small>
+          </div>
+          <div id="nightTimes" style="margin-top:10px">
+            <label>Night is from / until</label>
+            <div class="row"><input id="setNightFrom" type="time"><input id="setNightTo" type="time"></div>
+          </div>
+          <p class="sub" id="nightInfo" style="margin:10px 0 0"></p>
+        </div>
         <label for="setDim" style="margin-top:10px">Dim the screen after (minutes without a touch)</label><select id="setDim"></select>
         <label for="setSleep" style="margin-top:10px">Sleep timer (stops the TV after)</label><select id="setSleep"></select>
         <label for="setYtq" style="margin-top:10px">YouTube picture quality (streaming and downloads)</label><select id="setYtq"></select>
@@ -373,7 +389,7 @@ $('palAdd').onclick = async () => {
   await load();
 };
 
-const OFF_LABELS = {youtube_height: v => v + 'p' + (v === 360 ? '  (recommended: plenty for this screen)' : ''), auto_dim_min: v => v ? v + ' min' : 'Never', sleep_timer_min: v => v ? v + ' min' : 'Off', brightness: v => v + '%'};
+const OFF_LABELS = {youtube_height: v => v + 'p' + (v === 360 ? '  (recommended: plenty for this screen)' : ''), auto_dim_min: v => v ? v + ' min' : 'Never', sleep_timer_min: v => v ? v + ' min' : 'Off', brightness: v => v + '%', night_brightness: v => v + '%', night_schedule: v => v === 'sun' ? 'At sunset and sunrise' : 'At set times'};
 function fillSelect(id, key, options, value) {
   const sel = $(id); if (document.activeElement === sel) return;
   sel.innerHTML = ''; for (const o of options) sel.add(new Option(OFF_LABELS[key](o), o)); sel.value = value;
@@ -385,6 +401,18 @@ function renderSettings() {
   fillSelect('setSleep', 'sleep_timer_min', st.options.sleep_timer_min, st.values.sleep_timer_min);
   fillSelect('setYtq', 'youtube_height', st.options.youtube_height, st.values.youtube_height);
   $('setShuffle').checked = !!st.values.shuffle;
+  const v = st.values, night = st.night || {};
+  $('setNight').checked = !!v.night_mode; $('nightBox').classList.toggle('hide', !v.night_mode);
+  fillSelect('setNightLevel', 'night_brightness', st.options.night_brightness, v.night_brightness);
+  fillSelect('setNightMode', 'night_schedule', st.options.night_schedule, v.night_schedule);
+  $('nightSun').classList.toggle('hide', v.night_schedule !== 'sun');
+  $('nightTimes').classList.toggle('hide', v.night_schedule === 'sun' && night.using === 'sun');
+  if (document.activeElement !== $('setNightLoc')) $('setNightLoc').value = v.night_location;
+  if (document.activeElement !== $('setNightFrom')) $('setNightFrom').value = v.night_from;
+  if (document.activeElement !== $('setNightTo')) $('setNightTo').value = v.night_to;
+  $('nightInfo').textContent = !v.night_mode ? '' :
+    (night.using === 'sun' ? 'Using sunset and sunrise at your location' + (night.sunset ? ' (today: sunrise ' + night.sunrise + ', sunset ' + night.sunset + ')' : '') + '. '
+      : (v.night_schedule === 'sun' ? 'No location saved, so using the set times. ' : 'Using the set times. ')) + (night.clock === false ? 'Waiting for the TV to set its clock from the network (it needs Wi-Fi); until then it stays at the daytime brightness.' : (night.night ? 'It is night now.' : 'It is daytime now.'));
   $('setLookahead').checked = st.values.youtube_lookahead !== false;
 }
 async function saveSetting(key, value) {
@@ -396,6 +424,27 @@ $('setBright').onchange = () => saveSetting('brightness', Number($('setBright').
 $('setDim').onchange = () => saveSetting('auto_dim_min', Number($('setDim').value));
 $('setSleep').onchange = () => saveSetting('sleep_timer_min', Number($('setSleep').value));
 $('setYtq').onchange = () => saveSetting('youtube_height', Number($('setYtq').value));
+$('setNight').onchange = () => saveSetting('night_mode', $('setNight').checked);
+$('setNightLevel').onchange = () => saveSetting('night_brightness', Number($('setNightLevel').value));
+$('setNightMode').onchange = () => saveSetting('night_schedule', $('setNightMode').value);
+async function useLocation(text, note) {
+  $('setNightLoc').value = text; await saveSetting('night_location', text); if (note) say($('setmsg'), note, 'ok');
+}
+$('useLocation').onclick = () => {
+  if (!window.isSecureContext || !navigator.geolocation) { say($('setmsg'), 'Your browser only shares its location with secure (https) pages, and this page is not one. Use the time zone button, or type the coordinates.', 'bad'); return; }
+  say($('setmsg'), 'Asking your browser...', 'ok');
+  navigator.geolocation.getCurrentPosition(
+    p => useLocation(p.coords.latitude.toFixed(4) + ', ' + p.coords.longitude.toFixed(4), 'Saved the location of this device.'),
+    e => say($('setmsg'), e.code === 1 ? 'Your browser did not share its location. Use the time zone button, or type the coordinates.' : 'Could not get a location. Use the time zone button, or type the coordinates.', 'bad'),
+    {timeout: 15000});
+};
+$('useZone').onclick = async () => {
+  try { const r = await api('/api/timezone-location'); await useLocation(r.location, 'Using the main city of ' + r.zone + ' (' + r.location + '). Type exact coordinates for better accuracy.'); }
+  catch (e) { say($('setmsg'), e.message, 'bad'); }
+};
+$('saveNightLoc').onclick = () => saveSetting('night_location', $('setNightLoc').value);
+$('setNightFrom').onchange = () => saveSetting('night_from', $('setNightFrom').value);
+$('setNightTo').onchange = () => saveSetting('night_to', $('setNightTo').value);
 $('setShuffle').onchange = () => saveSetting('shuffle', $('setShuffle').checked);
 $('setLookahead').onchange = () => saveSetting('youtube_lookahead', $('setLookahead').checked);
 function dur(sec) { const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60); return (d ? d + ' d ' : '') + (h || d ? h + ' h ' : '') + m + ' min'; }

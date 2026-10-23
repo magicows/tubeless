@@ -181,6 +181,11 @@ class Hooks:
         self.name = name.strip()
         return self.name
 
+    found = {"zone": "Europe/London", "location": "51.5083, -0.1253"}
+
+    def timezone_location(self):
+        return self.found
+
     theme_state = ("--accent:#ffc900", "brutal")
 
     def theme_css(self):
@@ -517,3 +522,12 @@ def test_the_page_carries_the_chosen_theme_and_the_palette_endpoints_need_the_pi
     assert call(server, "POST", "/api/palette", {"name": "Ocean", "colours": "  "}, token)[0] == 400
     assert call(server, "POST", "/api/palette/delete", {"id": "c-ocean"}, token)[0] == 200
     assert call(server, "POST", "/api/palette/delete", {"id": "classic"}, token)[0] == 400
+
+
+def test_the_time_zone_location_endpoint_needs_the_pin_and_says_so_when_it_cannot_tell(server):
+    assert call(server, "GET", "/api/timezone-location")[0] == 401
+    token = login(server)
+    status, body = call(server, "GET", "/api/timezone-location", token=token)
+    assert status == 200 and body == {"zone": "Europe/London", "location": "51.5083, -0.1253"}
+    server.hooks.found = None
+    assert call(server, "GET", "/api/timezone-location", token=token)[0] == 404

@@ -41,6 +41,7 @@
 - [x] Web companion settings, status and log, YouTube quality (360p default), yt-dlp updater, new-video detection, update from a release
 - [x] "Technical difficulties" picture, one static clip with two lengths, per-channel play order
 - [x] Wi-Fi guard (router ping, chip reload, one self-restart), health notes in the log, stream timeouts
+- [x] Dim at night (opt in, `daynight.py`): sunset to sunrise from a typed location, or set times; half-hour fades; the boot screen starts at the right level
 - [x] Faster YouTube changeovers: the next video's address is worked out in the background (on by default, v0.1.6)
 
 ## Next
