@@ -227,6 +227,7 @@ class WebServer:
     hooks (provided by the app):
         state() -> dict                       name, channels, ...
         set_name(name) -> str                 raises ValueError("why not")
+        jellyfin(action, params) -> dict      the Jellyfin card: status, connect, quick, quick_poll, disconnect, libraries, items, episodes, test
         timezone_location() -> dict | None    {'zone', 'location': 'lat, lon'} for the TV's time zone's main city
         theme_css() / theme_style()           the chosen theme, for the page (the colours as CSS; 'soft' or 'brutal')
         add_palette(name, text, light, brutal) -> dict      a pasted palette, saved and chosen; delete_palette(id); raise ValueError("why not")
@@ -236,6 +237,8 @@ class WebServer:
         set_standby(data: bytes) -> None      raises ValueError("why not")
         reset_standby() -> None               back to the picture that ships with Tubeless
         set_setting(key, value) -> None       raises ValueError("why not")
+        set_channel_list(names)               the channels' numbers: every channel's folder name, first is channel 1; raises ValueError("why not")
+        reshuffle_live(channel)               a new running order in Live TV mode; raises ValueError("why not")
         set_channel_order(channel, order)     'shuffle' | 'order' | 'default'; raises ValueError("why not")
         statics                               a statics.StaticManager (the TV static clip and its files; raises ValueError("why not"))
         status() -> dict                      uptime, temperature, memory ...
@@ -342,7 +345,7 @@ class WebServer:
                         state["youtube"] = yt.status() if yt else {"available": False}
                         sums = yt.summaries() if yt else {}
                         for ch in state.get("channels", []):
-                            ch["kind"] = "youtube" if ch["name"] in sums else "folder"
+                            ch["kind"] = "youtube" if ch["name"] in sums else ch.get("kind", "folder")
                             if ch["name"] in sums:
                                 ch["youtube"] = sums[ch["name"]]
                         self._json(200, state)
@@ -361,6 +364,12 @@ class WebServer:
                             self._send(200, path.read_bytes(), ctype)
                         except OSError:
                             self._fail(404, "No clip.")
+                elif route.startswith("/api/jf/"):
+                    if self._authed():
+                        try:
+                            self._json(200, server.hooks.jellyfin(route[len("/api/jf/"):], self._query()))
+                        except ValueError as e:
+                            self._fail(400, str(e))
                 elif route == "/api/timezone-location":
                     if self._authed():
                         found = server.hooks.timezone_location()
@@ -440,6 +449,16 @@ class WebServer:
                         self._json(200, {"greeting": server.hooks.set_greeting(str(data.get("greeting", "")))})
                     except ValueError as e:
                         self._fail(400, str(e))
+                elif route.startswith("/api/jf/"):
+                    if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    try:
+                        self._json(200, server.hooks.jellyfin(route[len("/api/jf/"):], {str(k): v for k, v in data.items()}))
+                    except ValueError as e:
+                        self._fail(400, str(e))
                 elif route in ("/api/palette", "/api/palette/delete"):
                     if not self._authed():
                         return
@@ -498,6 +517,28 @@ class WebServer:
                         return
                     try:
                         server.hooks.set_channel_order(str(data.get("channel", "")), str(data.get("order", "")))
+                    except ValueError as e:
+                        return self._fail(400, str(e))
+                    self._json(200, {"ok": True})
+                elif route == "/api/channels/order":
+                    if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    try:
+                        server.hooks.set_channel_list(data.get("order"))
+                    except ValueError as e:
+                        return self._fail(400, str(e))
+                    self._json(200, {"ok": True})
+                elif route == "/api/channel/reshuffle":
+                    if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    try:
+                        server.hooks.reshuffle_live(str(data.get("channel", "")))
                     except ValueError as e:
                         return self._fail(400, str(e))
                     self._json(200, {"ok": True})

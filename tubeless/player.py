@@ -147,11 +147,14 @@ class MpvPlayer:
     def _youtube_options(self) -> list:
         """So a YouTube link in a playlist is played (as 480p H.264) by the yt-dlp the user installed."""
         from .youtube import DEFAULT_HEIGHT, find_ytdlp, formats
+        from . import __version__
+        agent = f"--user-agent=Tubeless/{__version__}"           # for plain streams (Jellyfin): a proxy such as Cloudflare refuses a library's default
         path = find_ytdlp(getattr(self.cfg, "ytdlp_path", ""))
         if not path:
-            return ["--ytdl=no"]
+            return ["--ytdl=no", agent]
         joined, single = formats(getattr(self, "youtube_height", DEFAULT_HEIGHT))
-        return ["--ytdl=yes", f"--ytdl-format={joined}/{single}", f"--script-opts=ytdl_hook-ytdl_path={path}"]
+        exclude = "/Videos/%x+/stream"                            # a Jellyfin stream is played as it is: yt-dlp is not asked about it
+        return ["--ytdl=yes", f"--ytdl-format={joined}/{single}", f"--script-opts=ytdl_hook-ytdl_path={path},ytdl_hook-exclude={exclude}", agent]
 
     def _open_log(self):
         """Append to mpv.log, starting over once it passes 512 KB."""

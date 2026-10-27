@@ -181,6 +181,13 @@ class Hooks:
         self.name = name.strip()
         return self.name
 
+    listed = []
+
+    def set_channel_list(self, names):
+        if not isinstance(names, list):
+            raise ValueError("not a list")
+        self.listed = names
+
     found = {"zone": "Europe/London", "location": "51.5083, -0.1253"}
 
     def timezone_location(self):
@@ -531,3 +538,11 @@ def test_the_time_zone_location_endpoint_needs_the_pin_and_says_so_when_it_canno
     assert status == 200 and body == {"zone": "Europe/London", "location": "51.5083, -0.1253"}
     server.hooks.found = None
     assert call(server, "GET", "/api/timezone-location", token=token)[0] == 404
+
+
+def test_the_channel_order_endpoint(server):
+    server.hooks.listed = []
+    assert call(server, "POST", "/api/channels/order", {"order": ["b", "a"]})[0] == 401
+    token = login(server)
+    assert call(server, "POST", "/api/channels/order", {"order": ["b", "a"]}, token)[0] == 200 and server.hooks.listed == ["b", "a"]
+    assert call(server, "POST", "/api/channels/order", {"order": "nope"}, token)[0] == 400

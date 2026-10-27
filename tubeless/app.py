@@ -26,6 +26,8 @@ from .config import Config, expand, set_config_value, user_config_path
 from .gestures import GestureRecognizer
 from . import health
 from .hardware import Hardware, apply_affine, solve_affine
+from . import jellyfin, live
+from .jfchannel import JellyfinChannelFile
 from .libindex import LibraryIndex
 from .lookahead import Lookahead
 from .library import STREAM_PREFIX, Library, Plan, Playlists
@@ -38,7 +40,7 @@ from . import __version__
 from .updater import UpdateError, Updater
 from .setupweb import SetupServer
 from .web import Session, UploadManager, WebServer, local_ip
-from .youtube import DEFAULT_HEIGHT, HEIGHTS, YouTubeManager, YtDlp, find_ytdlp
+from .youtube import DEFAULT_HEIGHT, HEIGHTS, YTDLP_RELEASES, YouTubeManager, YtDlp, default_fetch_json, find_ytdlp, ytdlp_newer
 from .wifi import HOTSPOT_IP, Wifi, new_hotspot_credentials, wifi_qr_text
 
 log = logging.getLogger(__name__)
@@ -85,6 +87,15 @@ class App:
         if hasattr(player, "youtube_height"):
             player.youtube_height = self.youtube_height
         customs = self.settings.get("custom_themes", [])
+        self.live_tv = bool(self.settings.get("live_tv", False))          # Live TV mode: opt in (see live.py)
+        self.playlists.live = self._live_slot
+        listed = self.settings.get("channel_list", [])
+        self.library.order = [n for n in listed if isinstance(n, str)] if isinstance(listed, list) else []
+        seeds = self.settings.get("live_seeds", {})
+        self.live_seeds: dict = {k: v for k, v in (seeds if isinstance(seeds, dict) else {}).items() if isinstance(v, int)}   # a channel's reshuffles
+        self.jf_credentials = jellyfin.Credentials(self.cfg.data)       # the Jellyfin token, if signed in (never the password)
+        self.library.jf_url = self._jf_stream_url
+        self._jf_quick: Optional[dict] = None                           # a Quick Connect waiting for approval: {server, secret, code}
         self.custom_themes: list = [c for c in customs if isinstance(c, dict)] if isinstance(customs, list) else []
         self.theme_id = str(self.settings.get("theme", themes.DEFAULT_THEME))
         self._apply_theme()
@@ -137,8 +148,14 @@ class App:
         self._stream_notice_until = 0.0
         self.stream_notice_after = 2.0         # seconds of loading before the 'loading from YouTube' message appears
         self.stream_notice_for = 7.0
+        self.net_wait_max = 60.0               # after a start, a channel that streams waits this long for the network before trying anyway
+        self.net_settle = 3.0                  # ... and a moment more once it is up, for name lookups to work
+        self._net_waited = False
         self.stream_give_up = 45.0             # a YouTube video that has not started after this long is skipped
         self.stream_restart = 120.0            # ... and if mpv is still stuck on it after this, the player is restarted past it
+        self.ytdlp_auto_every = 24 * 3600.0     # yt-dlp is looked at (and updated if it is behind) this often, at most, when the TV is idle
+        self.ytdlp_fetch_json = default_fetch_json
+        self._ytdlp_auto_running = False
         self._ytdlp = ytdlp                    # tests pass a FakeYtDlp; normally found when the upload page starts
         self.youtube: Optional[YouTubeManager] = None
         self.wifi = wifi                       # None, or something that can make a hotspot and join networks
@@ -308,13 +325,40 @@ class App:
         self.plan = plan
         self._cur_rel = None
         self._lookahead_tried.clear()
+        if not self._net_waited:
+            self._net_waited = True
+            self._wait_for_network(plan)
         path = self.playlists.write_m3u(plan, self.m3u_path)
         self.player.start(path)
         self._set_resume(plan)
 
+    def _network_ready(self) -> bool:
+        return self.online() and self.wifi.reachable() is not False
+
+    def _wait_for_network(self, plan: Plan) -> None:
+        """Just after the TV starts its Wi-Fi is still joining. A channel that streams from YouTube would run through its videos
+        ('No Wi-Fi', next, 'No Wi-Fi', next ...) before it was up, so wait for the network first (up to net_wait_max), once per start."""
+        if not self.wifi_available or not any(self.library.is_stream(r) for r in plan.order) or self._network_ready():
+            return
+        started = time.time()
+        log.info("waiting for the network before starting a channel that streams")
+        self._show_busy("WAITING FOR WI-FI", ["This channel plays from YouTube", "It starts when the network is up"])
+        while not self.stop_event.is_set():
+            waited = time.time() - started
+            if self._network_ready():
+                self.stop_event.wait(self.net_settle)
+                log.info("the network came up after %.0f s: starting", waited)
+                return
+            if waited >= self.net_wait_max:
+                log.warning("still no network after %.0f s: starting anyway", waited)
+                return
+            self.stop_event.wait(1.0 if self.net_wait_max > 5 else 0.05)
+
     def _set_resume(self, plan: Plan) -> None:
         prog = self.playlists.progress(plan.channel)
         pos = float(prog.get("pos", 0)) if prog.get("current") == plan.current else 0.0
+        if self.library.is_jellyfin(plan.current):
+            pos = 0.0                                          # a transcoded stream can't be sought into: a Jellyfin video starts from the beginning
         if pos > RESUME_REWIND + 2:
             self._pending_resume = (self.library.abspath(plan.channel, plan.current), pos - RESUME_REWIND, plan.current)
         else:
@@ -527,6 +571,7 @@ class App:
         self.backlight.set(0)
         self._clear_overlay()
         self.mode = "standby"
+        self._auto_update_ytdlp()                       # the screen is off and the player paused: a good moment
 
     def _wake(self) -> None:
         if self.mode == "standby":
@@ -642,6 +687,8 @@ class App:
             self.render_menu()
         elif kind == "reshuffle":
             if self.shuffle_for(self.current_channel()):
+                if self.live_tv and self._live_channel(self.current_channel()) is not None:
+                    self.reshuffle_live(self.current_channel().name)          # a new running order; what is on air in it plays now
                 self.finish_cycle_in_place()
             self.schedule_menu_hide()
             self.render_menu()
@@ -1017,7 +1064,7 @@ class App:
             return
         idx = pos + 2                                           # the next video (a static clip sits between)
         nxt = self.playlists.episode_at(self.plan, idx)
-        if nxt is None or not self.library.is_stream(nxt):
+        if nxt is None or not self.library.is_youtube(nxt):          # looking ahead is for YouTube (a Jellyfin video starts in seconds anyway)
             return
         vid = nxt[len(STREAM_PREFIX):]
         hit = self.lookahead.ready(vid)
@@ -1087,7 +1134,8 @@ class App:
         elif not cur["loaded"] and not cur["shown"] and now - cur["since"] > self.stream_notice_after and not self.menu_open and self.mode == "play":
             cur["shown"] = True
             title = self.library.title_of(self.plan.channel, rel)
-            self._set_overlay(render.render_message(self.hw, "LOADING FROM YOUTUBE", [title[:44], "This can take about 10 seconds"], self.name))
+            where, wait = ("JELLYFIN", "This can take a few seconds") if self.library.is_jellyfin(rel) else ("YOUTUBE", "This can take about 10 seconds")
+            self._set_overlay(render.render_message(self.hw, f"LOADING FROM {where}", [title[:44], wait], self.name))
         if not cur["loaded"] and self.mode == "play":
             waited = now - cur["since"]
             if waited > self.stream_restart and not cur.get("restarted"):
@@ -1111,13 +1159,16 @@ class App:
 
     def _stream_failed(self, cur: dict) -> None:
         title = self.library.title_of(self.plan.channel, cur["rel"]) if self.plan else ""
-        if not find_ytdlp(self.cfg.ytdlp_path):
+        jelly = self.library.is_jellyfin(cur["rel"])
+        if jelly and not self.jf_credentials.signed_in:
+            why = "Jellyfin isn't connected: sign in on the upload page"
+        elif not jelly and not find_ytdlp(self.cfg.ytdlp_path):
             why = "yt-dlp isn't installed on this TV"
         elif self.wifi_available and not self.online():
             why = "No Wi-Fi: this channel needs the internet"
         else:
-            why = "YouTube wouldn't play it, so it was skipped"
-        log.warning("could not play %r from YouTube: %s", title, why)
+            why = ("Your Jellyfin server wouldn't play it" if jelly else "YouTube wouldn't play it") + ", so it was skipped"
+        log.warning("could not play %r from %s: %s", title, "Jellyfin" if jelly else "YouTube", why)
         if self.menu_open or self.mode != "play":
             return
         self._set_overlay(render.render_message(self.hw, "COULDN'T PLAY", [title[:44], why, "Swipe to change channel"], self.name))
@@ -1226,8 +1277,47 @@ class App:
         except Exception:
             log.exception("could not start checking playlists")
         self.index.start_scan()                         # the player is stopped, so reading durations costs playback nothing
+        self._auto_update_ytdlp()
         self._screen_dirty = True
         self._draw_screen()
+
+    def _auto_update_ytdlp(self) -> None:
+        """On by default (a checkbox on the page turns it off): at most once a day, when the TV is in upload mode or in standby (never while
+        it is playing, and never while videos are downloading), look for a newer yt-dlp and install it. YouTube changes often, and an old
+        yt-dlp is the usual reason a YouTube video stops playing."""
+        if not self.settings.get("ytdlp_auto", True) or self._ytdlp_auto_running:
+            return
+        now = time.time()
+        if now - float(self.settings.get("ytdlp_auto_at", 0) or 0) < self.ytdlp_auto_every:
+            return
+        manager = self.youtube
+        yt = manager.yt if manager is not None else (self._ytdlp or YtDlp(find_ytdlp(self.cfg.ytdlp_path)))
+        if not yt.available() or not yt.can_update() or not self.online() or (manager is not None and manager.busy()):
+            return
+        self._ytdlp_auto_running = True
+        self.settings.set(ytdlp_auto_at=now)                # tried today, whatever happens: a failure is not retried every few minutes
+
+        def work():
+            try:
+                if manager is not None:
+                    newer = manager.check_ytdlp()["update_available"]
+                else:
+                    latest = str(self.ytdlp_fetch_json(YTDLP_RELEASES)["tag_name"]).lstrip("v")
+                    newer = ytdlp_newer(latest, yt.version() or "")
+                if not newer:
+                    log.info("yt-dlp checked: already the newest")
+                elif manager is not None:
+                    manager.update_ytdlp()                    # the page shows its progress like a manual update
+                    log.info("yt-dlp: updating automatically")
+                else:
+                    before = yt.version()
+                    log.info("yt-dlp updated automatically: %s -> %s", before, yt.update())
+            except Exception as e:
+                log.warning("could not update yt-dlp automatically: %s", e)
+            finally:
+                self._ytdlp_auto_running = False
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _mark_screen_dirty(self) -> None:
         self._screen_dirty = True
@@ -1564,6 +1654,175 @@ class App:
         log.info("boot greeting changed from the upload page")
         return value
 
+    # --- Live TV mode (see live.py) ------------------------------------------------------------------------------------
+    def _seconds_of(self, channel, rel: str, streams: dict) -> Optional[float]:
+        return streams.get(rel) if self.library.is_stream(rel) else self.index.duration(channel, rel)
+
+    def _live_channel(self, channel, rels: Optional[list] = None) -> Optional[tuple]:
+        """(running order, durations) for a channel if Live TV mode can schedule it (every length known), else None."""
+        rels = rels if rels is not None else self.library.videos(channel)
+        if not rels:
+            return None
+        streams = self.library.stream_seconds(channel) if any(self.library.is_stream(r) for r in rels) else {}
+        in_order = None if self.shuffle_for(channel) else (lambda r, c=channel: self.library.in_order(c, r))
+        order = live.broadcast_order(channel.name, rels, in_order, self.live_seeds.get(channel.name, 0))
+        durations = [self._seconds_of(channel, r, streams) for r in order]
+        return (order, durations) if all(d and d > 0 for d in durations) else None
+
+    def _live_slot(self, channel) -> Optional[tuple]:
+        """What is on air on this channel now: (running order, video, seconds in), or None (Live TV mode off, or a length unknown)."""
+        if not self.live_tv:
+            return None
+        found = self._live_channel(channel)
+        if found is None:
+            return None
+        order, durations = found
+        on_air = live.slot(order, durations, time.time(), self.statics.lengths()[0])
+        return (order, on_air[0], on_air[1]) if on_air else None
+
+    def reshuffle_live(self, channel_name: str) -> None:
+        """A new running order for a channel in Live TV mode (it plays round and round, so it never reshuffles by itself)."""
+        channel = next((c for c in self.library.channels() if c.name == channel_name), None)
+        if channel is None:
+            raise ValueError("No such channel.")
+        if not self.live_tv:
+            raise ValueError("Live TV mode is off.")
+        if not self.shuffle_for(channel):
+            raise ValueError("That channel plays in order, so there is nothing to reshuffle. Set it to shuffle first.")
+        rels = self.library.videos(channel)
+        current = live.broadcast_order(channel.name, rels, None, self.live_seeds.get(channel.name, 0))
+        seed = self.live_seeds.get(channel.name, 0)
+        for _ in range(50):                                          # a different order, not by chance the same one again
+            seed += 1
+            if len(rels) < 2 or live.broadcast_order(channel.name, rels, None, seed) != current:
+                break
+        self.live_seeds[channel.name] = seed
+        self.settings.set(live_seeds=dict(self.live_seeds))
+        log.info("Live TV running order of %s reshuffled", channel.name)
+
+    def live_status(self) -> dict:
+        """For the page: which channels Live TV mode can schedule, and for the others how many lengths are missing."""
+        channels = []
+        for c in self.library.channels():
+            rels = self.library.videos(c)
+            streams = self.library.stream_seconds(c) if any(self.library.is_stream(r) for r in rels) else {}
+            missing = sum(1 for r in rels if not (self._seconds_of(c, r, streams) or 0) > 0)
+            found = None if missing or not rels else self._live_channel(c, rels)
+            channels.append({"name": c.name, "label": c.label, "ready": found is not None, "missing": missing,
+                             "minutes": live.minutes(live.total_seconds(found[1], self.statics.lengths()[0])) if found else None})
+        return {"channels": channels}
+
+    # --- Jellyfin (see jellyfin.py; the page's Jellyfin card) ---------------------------------------------------------
+    def _jf_stream_url(self, item_id: str) -> str:
+        """The address a Jellyfin video plays from (at the quality set for YouTube too). Raises JellyfinError if not signed in."""
+        return self._jf_client().stream_url(item_id, self.youtube_height)
+
+    def _jf_channel_folder(self, name: str) -> Path:
+        return self.library.root / name
+
+    def _jf_add(self, p: dict) -> dict:
+        """Add ticked movies, series, collections or playlists to a new or an existing Jellyfin channel."""
+        from .web import sanitize_channel
+        client = self._jf_client()
+        existing, new = str(p.get("channel", "") or ""), str(p.get("new", "") or "")
+        ids = p.get("ids") or []
+        if not isinstance(ids, list):
+            raise jellyfin.JellyfinError("Tick something to add first.")
+        if existing:
+            folder = self._jf_channel_folder(existing)
+            if existing not in [c.name for c in self.library.channels()] or not JellyfinChannelFile.exists(folder):
+                raise jellyfin.JellyfinError("That isn't one of your Jellyfin channels.")
+            name = existing
+        else:
+            name = sanitize_channel(new)
+            if not name:
+                raise jellyfin.JellyfinError("Give the new channel a name.")
+            if (self.library.root / name).exists():
+                raise jellyfin.JellyfinError("There is already a channel with that name.")
+            folder = self._jf_channel_folder(name)
+        videos = client.resolve([str(i) for i in ids])                  # may raise: nothing is created in that case
+        folder.mkdir(parents=True, exist_ok=True)
+        cf = JellyfinChannelFile.load(folder)
+        added, skipped = cf.add(videos)
+        cf.save()
+        log.info("Jellyfin channel %s: added %d video(s), %d already there", name, added, skipped)
+        return {"channel": name, "added": added, "skipped": skipped, "total": len(cf.items)}
+
+    def _jf_channel(self, name: str) -> "JellyfinChannelFile":
+        folder = self._jf_channel_folder(str(name))
+        if str(name) not in [c.name for c in self.library.channels()] or not JellyfinChannelFile.exists(folder):
+            raise jellyfin.JellyfinError("That isn't one of your Jellyfin channels.")
+        return JellyfinChannelFile.load(folder)
+
+    def _jf_client(self) -> "jellyfin.Client":
+        cred = self.jf_credentials
+        if not cred.signed_in:
+            raise jellyfin.JellyfinError("Connect to your Jellyfin server first.")
+        return jellyfin.Client(cred.server, cred.token, cred.data.get("user_id", ""), cred.data.get("device_id", ""))
+
+    def jf_status(self) -> dict:
+        cred = self.jf_credentials
+        return {"connected": cred.signed_in, "server": cred.server, "user": cred.data.get("user_name", ""),
+                "version": cred.data.get("version", ""), "quick_code": self._jf_quick["code"] if self._jf_quick else ""}
+
+    def _jf_save(self, client: "jellyfin.Client", who: dict, info: dict) -> dict:
+        self.jf_credentials.save(server=client.server, token=who["token"], user_id=who["user_id"], user_name=who["user_name"],
+                                 version=info.get("version", ""), server_name=info.get("name", ""))
+        self._jf_quick = None
+        log.info("signed in to Jellyfin at %s as %s", client.server, who["user_name"])
+        return self.jf_status()
+
+    def jellyfin(self, action: str, p: dict):
+        """Everything the page's Jellyfin card asks for. Raises jellyfin.JellyfinError (a ValueError) with a message for the page."""
+        if action == "status":
+            return self.jf_status()
+        if action == "connect":                                       # the password is used once, here, and not kept
+            client = jellyfin.Client(p.get("server", ""))
+            info = client.public_info()
+            return self._jf_save(client, client.login(p.get("username", ""), p.get("password", "")), info)
+        if action == "quick":
+            client = jellyfin.Client(p.get("server", ""))
+            client.public_info()
+            start = client.quick_start()
+            self._jf_quick = {"server": client.server, "secret": start["secret"], "code": start["code"]}
+            return {"code": start["code"]}
+        if action == "quick_poll":
+            pending = self._jf_quick
+            if not pending:
+                raise jellyfin.JellyfinError("No Quick Connect is waiting. Start it again.")
+            client = jellyfin.Client(pending["server"])
+            if not client.quick_check(pending["secret"]):
+                return {"state": "waiting", "code": pending["code"]}
+            info = client.public_info()
+            return dict(self._jf_save(client, client.quick_finish(pending["secret"]), info), state="signed_in")
+        if action == "channels":
+            return {"channels": [{"name": c.name, "label": c.label, "count": len(JellyfinChannelFile.load(Path(c.path)).items)}
+                                 for c in self.library.channels() if JellyfinChannelFile.exists(Path(c.path))]}
+        if action == "channel":
+            return self._jf_channel(p.get("channel", "")).as_dict()
+        if action == "remove":
+            cf = self._jf_channel(p.get("channel", ""))
+            ids = p.get("ids") or []
+            gone = cf.remove(ids if isinstance(ids, list) else [])
+            cf.save()
+            return {"removed": gone, "left": len(cf.items)}
+        if action == "add":
+            return self._jf_add(p)
+        if action == "disconnect":
+            self._jf_quick = None
+            self.jf_credentials.forget()
+            return self.jf_status()
+        client = self._jf_client()
+        if action == "libraries":
+            return {"libraries": client.libraries()}
+        if action == "items":
+            return client.items(p.get("parent", ""), p.get("q", ""), start=int(p.get("start") or 0))
+        if action == "episodes":
+            return {"episodes": client.episodes(p.get("id", ""))}
+        if action == "test":
+            return client.check_stream(p.get("id", ""), self.youtube_height)
+        raise jellyfin.JellyfinError("The TV doesn't know that.")
+
     # --- themes (see themes.py) ----------------------------------------------------------------------------------
     def _apply_theme(self) -> None:
         available = themes.all_themes(self.custom_themes)
@@ -1637,8 +1896,13 @@ class App:
     def web_state(self) -> dict:
         channels = []
         for c in self.library.channels():
-            channels.append({"name": c.name, "label": c.label, "count": len(self.library.videos(c)),
-                             "library": self.index.summary(c), "order": self.channel_order.get(c.name)})
+            entry = {"name": c.name, "label": c.label, "count": len(self.library.videos(c)),
+                     "library": self.index.summary(c), "order": self.channel_order.get(c.name)}
+            if JellyfinChannelFile.exists(Path(c.path)):
+                entry["kind"] = "jellyfin"
+                entry["jellyfin"] = JellyfinChannelFile.load(Path(c.path)).as_dict()
+                entry["jellyfin"].pop("items", None)
+            channels.append(entry)
         return {"name": self.name, "greeting": self.cfg.boot_greeting, "channels": channels, "standby_custom": self.cfg.standby_custom.is_file(),
                 "scan": self.index.status(), "settings": self.web_settings(), "static": self.statics.state(),
                 "themes": self.theme_list(), "theme": self.theme_id,
@@ -1649,14 +1913,32 @@ class App:
         return {"values": {"brightness": self.brightness, "shuffle": self.shuffle, "auto_dim_min": self.auto_dim_min,
                            "sleep_timer_min": self.sleep_timer_min, "youtube_height": self.youtube_height,
                            "youtube_lookahead": self.lookahead_enabled, "theme": self.theme_id,
+                           "live_tv": self.live_tv, "ytdlp_auto": bool(self.settings.get("ytdlp_auto", True)),
                            "night_mode": self.night.enabled, "night_brightness": self.night.level, "night_schedule": self.night.mode,
                            "night_location": ("%s, %s" % self.night.location) if self.night.location else "",
                            "night_from": daynight.format_clock(self.night.start), "night_to": daynight.format_clock(self.night.end)},
+                "live": self.live_status() if self.live_tv else None,
                 "night": dict(self.night.describe(time.time()), clock=self._clock_trusted(time.time())),
                 "options": {"brightness": list(self.hw.brightness_levels), "auto_dim_min": list(AUTO_DIM_STEPS),
                             "sleep_timer_min": list(SLEEP_TIMER_STEPS), "youtube_height": list(HEIGHTS),
                             "theme": list(themes.all_themes(self.custom_themes)), "night_brightness": list(self.hw.brightness_levels),
                             "night_schedule": list(daynight.MODES)}}
+
+    def set_channel_list(self, names: list) -> None:
+        """The channels' numbers, set by dragging them into order on the web page: `names` is every channel, first is channel 1."""
+        known = [c.name for c in self.library.channels()]
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            raise ValueError("That isn't a list of channels.")
+        wanted = [n for n in dict.fromkeys(names) if n in known]
+        if not wanted:
+            raise ValueError("None of those are channels on this TV.")
+        order = wanted + [n for n in known if n not in wanted]                 # any channel left out keeps its place at the end
+        current = self.current_channel().name if known else None
+        self.library.order = order
+        self.settings.set(channel_list=order)
+        if current in order:
+            self.channel_index = order.index(current)                           # the TV stays on the channel it is on, whatever its number
+        log.info("channel order set from the web page: %s", ", ".join(order))
 
     def set_channel_order(self, channel: str, order: str) -> None:
         """'shuffle', 'order', or 'default' (follow the TV's Shuffle setting) for one channel, from the web page."""
@@ -1679,6 +1961,16 @@ class App:
                 raise ValueError("That is on or off.")
             self.lookahead_enabled = value
             self.settings.set(youtube_lookahead=value)
+        elif key == "ytdlp_auto":
+            if not isinstance(value, bool):
+                raise ValueError("That is on or off.")
+            self.settings.set(ytdlp_auto=value)
+        elif key == "live_tv":
+            if not isinstance(value, bool):
+                raise ValueError("That is on or off.")
+            self.live_tv = value
+            self.settings.set(live_tv=value)
+            log.info("Live TV mode %s from the web page", "on" if value else "off")
         elif key in ("night_mode", "night_location", "night_from", "night_to"):
             if key == "night_mode":
                 if not isinstance(value, bool):
@@ -1840,11 +2132,20 @@ class _WebHooks:
     def set_channel_order(self, channel: str, order: str) -> None:
         self.app.set_channel_order(channel, order)
 
+    def set_channel_list(self, names: list) -> None:
+        self.app.set_channel_list(names)
+
     def theme_css(self) -> str:
         return self.app.theme_css()
 
     def theme_style(self) -> str:
         return self.app.theme_style()
+
+    def jellyfin(self, action: str, params: dict):
+        return self.app.jellyfin(action, params)
+
+    def reshuffle_live(self, channel: str) -> None:
+        self.app.reshuffle_live(channel)
 
     def timezone_location(self) -> Optional[dict]:
         found = daynight.timezone_location()

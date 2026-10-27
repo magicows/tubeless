@@ -18,14 +18,17 @@ import re
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .config import expand
+from .jfchannel import JellyfinChannelFile, PREFIX as JF_PREFIX, item_id_of as jf_item_id
 from .state import Store
 from .youtube import ChannelFile, valid_id
 
 VIDEO_EXTS = (".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm")
 _NUMBERED = re.compile(r"^(\d+)\.(.*)$")
+
+NOT_CONNECTED = "http://jellyfin.invalid/not-connected"      # what a Jellyfin video's address is while no server is signed in: fails at once
 STREAM_PREFIX = "yt-"                  # a video that is played from YouTube instead of from a file: "yt-<11 character id>"
 
 
@@ -48,13 +51,17 @@ class Channel:
 class Library:
     def __init__(self, root):
         self.root = expand(root)
+        self.jf_url: Optional[Callable[[str], str]] = None     # set by the app: a Jellyfin item's id -> the address to stream it from
+        self.order: List[str] = []         # channel numbers chosen on the web page: these first, in this order; the rest by folder name after them
 
     def channels(self) -> List[Channel]:
         try:
             names = [e.name for e in os.scandir(self.root) if e.is_dir() and not e.name.startswith(".")]
         except OSError:
             return []
-        return [Channel(n, str(self.root / n)) for n in sorted(names, key=_order_key)]
+        chosen = [n for n in self.order if n in names]
+        rest = sorted((n for n in names if n not in set(chosen)), key=_order_key)
+        return [Channel(n, str(self.root / n)) for n in chosen + rest]
 
     def videos(self, channel: Channel) -> List[str]:
         """Video files in a channel, as paths relative to the channel folder, sorted."""
@@ -69,7 +76,9 @@ class Library:
 
     @staticmethod
     def _streamed(channel: Channel, on_disk: List[str]) -> List[str]:
-        """A YouTube channel set to "stream": the ticked videos that aren't downloaded are played from YouTube."""
+        """A YouTube channel set to "stream": the ticked videos that aren't downloaded are played from YouTube. A Jellyfin channel: all its videos."""
+        if JellyfinChannelFile.exists(Path(channel.path)):
+            return [JF_PREFIX + i["id"] for i in JellyfinChannelFile.load(Path(channel.path)).items]
         if not ChannelFile.exists(Path(channel.path)):
             return []
         cf = ChannelFile.load(Path(channel.path))
@@ -81,6 +90,9 @@ class Library:
 
     def in_order(self, channel: Channel, rels: List[str]) -> List[str]:
         """The videos 'in order': a YouTube channel plays in its playlist's order; a folder plays by file name."""
+        if JellyfinChannelFile.exists(Path(channel.path)):                 # the order they were added in
+            position = {JF_PREFIX + i["id"]: n for n, i in enumerate(JellyfinChannelFile.load(Path(channel.path)).items)}
+            return sorted(rels, key=lambda r: (position.get(r, 10 ** 9), r))
         if not ChannelFile.exists(Path(channel.path)):
             return sorted(rels)
         cf = ChannelFile.load(Path(channel.path))
@@ -99,17 +111,49 @@ class Library:
         return bool(self._streamed(channel, []))
 
     def abspath(self, channel: Channel, rel: str) -> str:
-        """Where to play a video from: its file, or the YouTube address for a streamed one."""
+        """Where to play a video from: its file, or the address for a streamed one (YouTube, or your Jellyfin server)."""
         if rel.startswith(STREAM_PREFIX) and valid_id(rel[len(STREAM_PREFIX):]):
             return "https://www.youtube.com/watch?v=" + rel[len(STREAM_PREFIX):]
+        item = jf_item_id(rel)
+        if item:
+            try:
+                return self.jf_url(item) if self.jf_url else NOT_CONNECTED
+            except Exception:
+                return NOT_CONNECTED                       # not signed in: an address that fails at once, so the TV can say why
         return os.path.join(channel.path, rel)
 
     @staticmethod
-    def is_stream(rel: Optional[str]) -> bool:
+    def is_youtube(rel: Optional[str]) -> bool:
         return bool(rel) and rel.startswith(STREAM_PREFIX) and valid_id(rel[len(STREAM_PREFIX):])
 
+    @staticmethod
+    def is_jellyfin(rel: Optional[str]) -> bool:
+        return jf_item_id(rel) is not None
+
+    @classmethod
+    def is_stream(cls, rel: Optional[str]) -> bool:
+        """Played from the network (YouTube or Jellyfin) rather than from a file."""
+        return cls.is_youtube(rel) or cls.is_jellyfin(rel)
+
+    def stream_seconds(self, channel: Channel) -> Dict[str, float]:
+        """How long each streamed video of a channel is, as the playlist listing gave it: {rel: seconds} (unknown ones left out)."""
+        if JellyfinChannelFile.exists(Path(channel.path)):
+            return self._jf_seconds(channel)
+        if not ChannelFile.exists(Path(channel.path)):
+            return {}
+        return {STREAM_PREFIX + i["id"]: float(i["duration"]) for i in ChannelFile.load(Path(channel.path)).items
+                if isinstance(i.get("duration"), (int, float)) and i["duration"] > 0}
+
+    @staticmethod
+    def _jf_seconds(channel: Channel) -> Dict[str, float]:
+        return {JF_PREFIX + i["id"]: float(i["seconds"]) for i in JellyfinChannelFile.load(Path(channel.path)).items if i["seconds"]}
+
     def title_of(self, channel: Channel, rel: str) -> str:
-        if self.is_stream(rel) and ChannelFile.exists(Path(channel.path)):
+        if self.is_jellyfin(rel) and JellyfinChannelFile.exists(Path(channel.path)):
+            item = JellyfinChannelFile.load(Path(channel.path)).find(jf_item_id(rel))
+            if item:
+                return item["title"]
+        if self.is_youtube(rel) and ChannelFile.exists(Path(channel.path)):
             item = ChannelFile.load(Path(channel.path)).find(rel[len(STREAM_PREFIX):])
             if item:
                 return item["title"]
@@ -157,6 +201,19 @@ class Playlists:
         self.store = store
         self.static_path = static_path
         self.rng = rng or random.Random()
+        self.live: Optional[Callable[[Channel], Optional[Tuple[List[str], str, float]]]] = None     # Live TV mode (see live.py), set by the app
+
+    def _live_plan(self, channel: Channel, shuffle: bool) -> Optional[Plan]:
+        """With Live TV mode on and every length known: the plan that is on air now (its running order, the video and the position in it)."""
+        slot = self.live(channel) if self.live is not None else None
+        if not slot:
+            return None
+        order, current, position = slot
+        saved = self.store.load(self._file(channel), None) or {}
+        self.set_progress(channel, current, position)                    # the app's resume step seeks to it
+        plan = Plan(channel, order, order.index(current), int(saved.get("cycle", 0)), shuffle)
+        self._save(plan)
+        return plan
 
     # --- progress: which episode, how far in ------------------------------------
     def progress(self, channel: Channel) -> dict:
@@ -187,6 +244,9 @@ class Playlists:
         on_disk = self.library.videos(channel)
         if not on_disk:
             raise ValueError(f"No videos found in {channel.path}.")
+        live = self._live_plan(channel, shuffle)
+        if live is not None:
+            return live
         saved = self.store.load(self._file(channel), None) or {}
         current = self.progress(channel).get("current")
         disk = set(on_disk)
@@ -212,10 +272,13 @@ class Playlists:
         return plan
 
     def new_cycle(self, channel: Channel, shuffle: bool) -> Plan:
-        """You have been through everything (or asked): reshuffle and start again."""
+        """You have been through everything (or asked): reshuffle and start again. (In Live TV mode: back to what is on air now.)"""
         on_disk = self.library.videos(channel)
         if not on_disk:
             raise ValueError(f"No videos found in {channel.path}.")
+        live = self._live_plan(channel, shuffle)
+        if live is not None:
+            return live
         last = self.progress(channel).get("current")
         saved = self.store.load(self._file(channel), None) or {}
         order = self._shuffled(on_disk, avoid_first=last) if shuffle else self.library.in_order(channel, on_disk)
@@ -240,7 +303,8 @@ class Playlists:
     def write_m3u(self, plan: Plan, path) -> str:
         path = str(path)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)       # a Jellyfin address carries the sign-in token
+        with os.fdopen(fd, "w") as f:
             f.write("\n".join(self.entries(plan)) + "\n")
         return path
 

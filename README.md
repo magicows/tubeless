@@ -8,18 +8,22 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
   <img src="docs/images/tv-boot.png" alt="The boot screen" width="400">
 </p>
 
-> **Status: early.** It runs on the author's TV every day, and this is the first public cut. It supports one build only (see
-> [Hardware](#hardware)). Settings and file layouts may still change.
+> **Status: early (0.1.x).** It runs on the author's TV every day. It supports one build only (see [Hardware](#hardware)). Settings and file
+> layouts may still change. What is planned next is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What it does
 
-* **Channels are folders.** Put videos in `~/videos/1.cartoons`, `~/videos/2.movies` and so on. Swipe up or down to change channel.
+* **Channels are folders.** Put videos in `~/videos/1.cartoons`, `~/videos/2.movies` and so on. Swipe up or down to change channel. The channel numbers are
+  yours to change: press the up/down arrows icon on the Channels tab and drag the rows into the order you want (arrow keys work too); the TV's swipe order follows.
 * **Touch controls.** Swipe left or right for the next or previous episode, tap to pause, hold for the menu.
 * **Static between episodes.** A short burst before every video and a longer one when you change channel.
 * **Shuffle that doesn't repeat.** Each channel remembers its shuffled order and works through it. New videos are slotted in
   among the ones you haven't seen.
 * **Resume.** It returns to the right episode and the right place in it, even after you pull the plug.
 * **No keyboard on the TV.** The Wi-Fi password, the TV name and YouTube links all go through a web page on your phone.
+* **Jellyfin channels** (optional): connect your own Jellyfin server on the upload page, tick shows, movies, collections or playlists, and add them to a
+  new or existing Jellyfin channel (nothing becomes a channel by itself). They stream from the server, which does the transcoding; nothing is stored
+  on the TV except a sign-in token, never your password. See [docs/jellyfin.md](docs/jellyfin.md).
 * **YouTube channels** (optional): playlists and single videos, downloaded to the TV or streamed, at a quality you choose (360p by default).
 * **Looks after itself.** If the picture stalls or a stream hangs the TV restarts the player and shows a "technical difficulties"
   picture meanwhile; if the Wi-Fi chip locks up it reloads it, and restarts the TV once as a last resort (see
@@ -30,6 +34,11 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
   **upload and settings mode**; each asks for a second tap within a few seconds before it does anything.
 * **Dimming.** A paused picture dims after a minute untouched. Auto-dim (2, 5 or 10 minutes, or off) dims a playing one. A touch
   wakes the screen and does nothing else.
+* **Live TV mode** (optional, off until you switch it on in Settings on the upload page): channels run on the clock like broadcast TV. Tune
+  in and you join whatever is "on now", partway through, and the channel carries on while you watch another. Each channel plays the same
+  running order round and round (no reshuffling), so it needs every video's length: the TV reads them while it is in upload mode, and the
+  page lists which channels are ready (a channel with a length missing plays as usual). A shuffled channel's running order is fixed;
+  **Reshuffle** (in the shuffle icon's menu on each channel's row, or the TV menu's *Reshuffle channel* row) gives it a new one.
 * **Dim at night** (optional, off until you switch it on): full brightness by day, then a fade down to the night level (25% unless you
   choose another) over half an hour from sunset, and back up before sunrise, like a Mac's day and night cycle. The TV has no GPS, so give
   it a place on the upload page: type a latitude and longitude, or press *Use my time zone's city* (the TV's own time zone, good to a quarter
@@ -60,12 +69,12 @@ Only someone who can see the TV can get in. From there you can:
   sound once, when you choose it: add the TV static sound, make it silent, or use a sound file you upload. One clip is enough: the TV plays
   only the first 0.6 seconds of it between videos and the first 3 seconds when you change channel (both adjustable; a clip shorter
   than that is repeated to fill the time). The built-in static keeps its own short and long clips;
-* set a channel to play **in order** or **shuffled** (a YouTube channel's "in order" follows its playlist), or leave it following the TV's Shuffle setting;
+* set a channel to play **in order** or **shuffled** (a YouTube channel's "in order" follows its playlist), or leave it following the TV's Shuffle setting: the shuffle icon on each channel's row;
 * choose a **theme** for the menu, the information screens and the page itself (the original yellow and green, a neobrutalist one, Nord, Dracula, Gruvbox, Solarized light), or paste a palette from a colour-sharing site (hex codes or a coolors.co link) and the TV works out the background, text and accent, keeping the text readable. The boot screen keeps its Matrix rain;
 * set brightness, auto-dim, the sleep timer and shuffle, choose the **YouTube picture quality** (240p, 360p or 480p; 360p is the default and is plenty for this screen), and see the TV's status and recent log;
 * see how long each channel is (video lengths are read with `mediainfo` while the TV is in upload mode);
 * check for a newer release and update the TV from the page (see Updating below);
-* build YouTube channels (below).
+* build YouTube channels (below), and connect Jellyfin and add its shows and movies to channels ([docs/jellyfin.md](docs/jellyfin.md)).
 
 Hold the TV's screen to leave the upload page. Copying files over SFTP or `scp` into `~/videos/<channel>/` works too.
 
@@ -97,7 +106,8 @@ channel list. Tick the ones you want, save, and press Download. **Check for new 
 
 This needs two extras, which the installer adds when you ask (`--with-youtube`, see [Install](#install-on-a-fresh-pi)):
 [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg. Tubeless does not include either. YouTube changes often, so keep yt-dlp current. The upload page's TV tab has a **YouTube downloader** card that shows the
-version, checks for a newer one and updates it (not while videos are downloading). Or from a shell on the TV:
+version, checks for a newer one and updates it (not while videos are downloading). By default the TV also keeps it current by itself: about once a day, when it is in upload mode or standby (never while playing), it looks
+for a newer yt-dlp and installs it. A checkbox on the same card turns that off. Or from a shell on the TV:
 
 ```
 python3 -m tubeless youtube status
@@ -178,7 +188,9 @@ You need the build from the original guide (see [Credits](#credits)): a Pi Zero 
    curl -fsSL https://raw.githubusercontent.com/magicows/tubeless/main/get.sh | sudo sh -s -- --name "Living Room"
    ```
 
-   Add `--with-youtube` for YouTube channels. Add `--dry-run` first to see what it would do without changing anything. It takes 30 to 45
+   While it runs, the terminal prints an address and a PIN: open it on a phone or laptop on the same network to watch progress and, in the
+   meantime, set the TV's name, choose whether to add YouTube support and pick a "technical difficulties" picture (each can be changed until the
+   installer reaches the step that uses it; add `--no-page` to turn this off). Add `--with-youtube` for YouTube channels. Add `--dry-run` first to see what it would do without changing anything. It takes 30 to 45
    minutes on a Zero 2 W, nearly all of it installing packages. If you prefer, clone the repository and run `sudo sh install.sh --name "Living Room"`.
 
    The installer:
@@ -186,9 +198,10 @@ You need the build from the original guide (see [Credits](#credits)): a Pi Zero 
    * installs the packages it needs, without the recommended extras (a 512 MB Pi runs out of memory otherwise);
    * downloads Waveshare's display overlays and checks each file against a known checksum;
    * edits `config.txt` and `cmdline.txt`, showing the changes and keeping backups;
-   * installs the services and a narrow `sudo` rule: power off, reboot, restart Tubeless, and one root-owned Wi-Fi helper.
+   * installs the services and a narrow `sudo` rule: power off, reboot, restart Tubeless, and one root-owned Wi-Fi helper;
+   * turns on the hardware watchdog (a frozen Pi restarts itself), keeps the system log across restarts and switches off Wi-Fi power saving.
 
-   Run it again any time; it leaves anything already correct alone.
+   Run it again any time; it leaves anything already correct alone. If it stops, see [docs/troubleshooting.md](docs/troubleshooting.md).
 3. Reboot. The first start walks you through calibrating the touch screen. With no videos yet the TV offers the upload page.
 
 ## Updating
@@ -244,7 +257,7 @@ Open <http://127.0.0.1:8765/>. Useful flags: `--fresh` (first-run calibration), 
 ## Development
 
 ```
-.venv/bin/python -m pytest        # about 440 tests, including whole-app tests driven by synthetic touches
+.venv/bin/python -m pytest        # about 540 tests, including whole-app tests driven by synthetic touches
 python3 tools/screenshots.py      # regenerates the pictures in docs/images (needs playwright and Chrome)
 ```
 
@@ -253,7 +266,7 @@ tubeless/        the app: app.py, library.py, web.py, youtube.py, wifi.py, hal/ 
 tests/           unit tests and whole-app tests
 tools/           deploy.sh, an on-TV end-to-end test, screenshots
 packaging/       systemd unit templates and the Wi-Fi helper
-docs/            architecture, roadmap, manual test plan, the Trixie trial
+docs/            architecture, roadmap, troubleshooting, manual test plan, the SimpTV migration guide, Jellyfin
 ```
 
 Continuous integration runs the tests on Python 3.9 and 3.13. A daily job checks the newest yt-dlp against what Tubeless relies on

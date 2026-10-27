@@ -27,6 +27,9 @@ ssh <tv> 'tail -f ~/.local/share/tubeless/tubeless.log'
 4. **Swipe up/down** on the menu: the list scrolls. A tap never scrolls it.
 5. Tap a **channel** row: the long static, then that channel.
 6. Tap **outside** the menu panel: it closes. Leave it alone: it hides itself after about 5 seconds.
+7. The header: the TV's name, a small gap, then the channel name (long names shrink before they are cut), and two icon buttons at the right.
+   Tap the **upload** icon once: it fills in and the footer says to tap again; tap again: upload mode starts. Tap the **power** icon the same way
+   (the second tap shuts down: do this one last). Tapping one then the other leaves only the second armed. Wait 4 seconds: the first tap is forgotten.
 
 ## 3. Shuffle that doesn't repeat
 
@@ -59,7 +62,8 @@ ssh <tv> 'tail -f ~/.local/share/tubeless/tubeless.log'
 
 ## 7. Safe shutdown
 
-1. **Settings -> scroll down -> Shut down**: the row changes to "Tap again to confirm". Wait five seconds: it reverts.
+1. **Settings -> scroll down -> Shut down**: the row changes to "Tap again to confirm". Wait five seconds: it reverts. (The power icon in the
+   menu header works the same way.)
 2. Tap Shut down twice: a "SYSTEM HALT" screen, then the Pi powers down. (If a battery keeps it powered, cut power by hand once the
    screen is dark.)
 3. Power it back on: boots normally.
@@ -70,13 +74,34 @@ ssh <tv> 'tail -f ~/.local/share/tubeless/tubeless.log'
    panel appear: the typed greeting, lines turning to OK, a progress bar, then static and your episode.
 2. Roughly how long from power to picture? (It was 19 seconds to the service being ready when last measured.)
 
-## 9. Renaming
+## 9. Renaming and the wake-up message
 
-```
-ssh <tv> 'cd ~/tubeless && python3 -m tubeless config set name "Den" --restart'
-```
+On the upload page's TV tab: rename the TV and change the wake-up message; the menu title changes at once and the boot screen at the next
+start. A name over 16 characters or a message over 40 is refused; a blank message puts the standard one back. (From a shell:
+`python3 -m tubeless config set name "Den" --restart`.)
 
-The menu title and the boot screen change. A name longer than 16 characters is refused. Set it back the same way.
+## 10. The web page
+
+Open it from Settings > Upload videos (or the menu's upload icon) and enter the PIN.
+
+1. **Channels:** drag the rows into a new order with the up/down arrows icon: the numbers update, and swiping on the TV follows the new order,
+   staying on the channel it was on. The shuffle icon on a row opens its play order menu.
+2. **Themes** (TV tab): choose each one; the page and the TV's menu change. Add a palette from hex codes or a coolors.co link. The boot screen keeps its rain.
+3. **Dim at night** (TV tab): tick it, press *Use my time zone's city*, check today's sunrise and sunset. To see it work, choose *At set times* with a
+   night that began a few minutes ago: the screen fades to the night level within about half a minute, and back at the end time.
+4. **Live TV mode** (TV tab): tick it. Channels whose video lengths are known are listed as live; tune to one, switch away for a few minutes,
+   and come back: it has moved on. *Reshuffle* (on a channel's play order menu) gives it a new running order.
+5. **yt-dlp** (TV tab): the automatic update checkbox is ticked by default.
+
+## 11. Jellyfin
+
+See [jellyfin.md](jellyfin.md). Sign in on the Channels tab, press *Test stream* on a movie, add two movies to a new channel, play it on the TV.
+Switch the Wi-Fi off while it plays: the TV says why it can't play and moves on.
+
+## 12. Starting with no network
+
+Power-cycle with the router off, on a channel that streams: the TV shows "Waiting for Wi-Fi", then starts anyway after about a minute with the
+usual "couldn't play" card. With the router on, it waits only until the Wi-Fi is up.
 
 ## What to tell us
 

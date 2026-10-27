@@ -142,3 +142,16 @@ def test_standby_picture_is_fitted_to_the_screen_and_falls_back_to_the_bear(tmp_
     img = render.render_standby(HW, str(ASSETS_DIR / "standby.jpg"))
     assert img.size == (HW.view_w, HW.view_h)
     assert render.render_standby(HW, str(tmp_path / "missing.jpg")).size == (HW.view_w, HW.view_h)
+
+
+def test_long_names_in_the_header_are_shrunk_then_cut_and_never_run_under_the_buttons():
+    cx, cy = HW.bezel_center
+    row = int(cy + (40 - 240) * HW.bezel_scale)
+    left_of_buttons = int(cx + (render.button_rect("upload")[0] - 12 - 320) * HW.bezel_scale)
+    for title, sub in (("Sixteen Chars TV!", "Late Night Cartoons And Comedy Specials"), ("W" * 16, "X" * 60), ("Den", "")):
+        img = render.render_menu_landscape(MenuModel().items(CTX), 0, HW, title=title, subtitle=sub)
+        band = np.asarray(img.convert("RGB"))[row, :, :]
+        assert band[left_of_buttons - 3:left_of_buttons].std() < 40
+    short = render.render_menu_landscape(MenuModel().items(CTX), 0, HW, title="Den", subtitle="Cartoons")
+    longer = render.render_menu_landscape(MenuModel().items(CTX), 0, HW, title="Living Room TV", subtitle="The Documentaries Channel")
+    assert short.tobytes() != longer.tobytes()

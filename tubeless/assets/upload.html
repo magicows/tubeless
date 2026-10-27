@@ -73,6 +73,22 @@
   html[data-style=brutal] .chip, html[data-style=brutal] .badge { border:2px solid var(--ink); border-radius:0; color:var(--text); }
   .swatch { display:inline-block; width:18px; height:18px; border:2px solid var(--ink, #000); vertical-align:middle; margin-right:2px; }
   textarea { width:100%; background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:12px 14px; font:inherit; min-height:70px; }
+  .chan { position:relative; background:var(--panel); }
+  .chnum { flex:0 0 auto; min-width:1.6em; text-align:center; font:700 14px/1 ui-monospace, Menlo, monospace; color:var(--dim); margin-right:10px; }
+  .chan.reorder { cursor:default; user-select:none; -webkit-user-select:none; }
+  .chan.dragging { z-index:6; box-shadow:0 8px 24px rgba(0,0,0,.45); border-radius:10px; outline:2px solid var(--accent); transition:none; }
+  .grip { touch-action:none; cursor:grab; background:transparent; border:1px solid var(--line); color:var(--dim); border-radius:8px; padding:6px 8px; line-height:0; margin-right:10px; flex:0 0 auto; }
+  .grip svg { width:18px; height:18px; display:block; } .grip:active { cursor:grabbing; }
+  html[data-style=brutal] .grip { box-shadow:none; border:2px solid var(--ink); border-radius:0; color:var(--text); }
+  .ordbtn { background:transparent; color:var(--dim); border:1px solid var(--line); border-radius:8px; padding:5px 7px; line-height:0; flex:0 0 auto; }
+  .ordbtn svg { width:18px; height:18px; display:block; } .ordbtn.set { color:var(--atext); border-color:var(--atext); }
+  .pop { position:absolute; right:0; top:calc(100% - 4px); z-index:5; min-width:230px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:6px; box-shadow:0 8px 24px rgba(0,0,0,.35); }
+  .pop button { display:block; width:100%; text-align:left; background:transparent; color:var(--text); border:0; border-radius:8px; padding:10px 12px; font:500 15px/1.2 inherit; }
+  .pop button.on { color:var(--atext); font-weight:700; } .pop button.on::before { content:'\2713  '; } .pop button:disabled { opacity:.4; }
+  .pop hr { border:0; border-top:1px solid var(--line); margin:6px 0; }
+  html[data-style=brutal] .pop { border:3px solid var(--ink); border-radius:0; box-shadow:6px 6px 0 var(--ink); }
+  html[data-style=brutal] .pop button { box-shadow:none; border:0; color:var(--text); }
+  html[data-style=brutal] .ordbtn { box-shadow:none; border:2px solid var(--ink); border-radius:0; color:var(--text); }
   .hide { display:none !important; }
 </style>
 <style id="themecss"></style>
@@ -93,8 +109,10 @@
 
     <div id="tab-channels">
       <section class="card" id="chanlist">
-        <h2>Your channels</h2>
+        <h2 style="display:flex;justify-content:space-between;align-items:center"><span>Your channels</span><button class="ordbtn" id="reorderBtn" aria-label="Change the channel numbers" title="Change the channel numbers"></button></h2>
+        <p class="sub hide" id="reorderHelp" style="margin:0 0 6px">Drag a row by its handle to change its channel number (the TV's swipe order). Press the icon again when done.</p>
         <div id="channels"></div>
+        <p class="msg" id="chanmsg"></p>
         <p class="sub" id="scanline" style="margin-top:10px"></p>
         <p class="sub hide" id="refreshline" style="margin-top:6px"></p>
         <div class="row" style="margin-top:12px"><button class="ghost" id="rescan">Scan library</button><button class="ghost hide" id="ytrefresh">Check for new videos</button><button class="ghost" id="newFolder">+ Folder channel</button><button class="ghost" id="newYt">+ YouTube channel</button></div>
@@ -139,6 +157,37 @@
           <div class="meta hide" id="ytnow" style="color:var(--dim);font-size:13px;margin-bottom:6px"></div>
           <div class="row"><button id="ytsync">Download</button><button class="ghost hide" id="ytstop" style="flex:0 0 auto">Stop</button></div>
         </div>
+      </section>
+      <section class="card" id="jfcard">
+        <h2>Jellyfin</h2>
+        <div id="jfOut">
+          <p class="sub" style="margin:0 0 8px">Connect to your own Jellyfin server to play from it. The TV keeps only a sign-in token (never your password), which you can revoke from Jellyfin's dashboard. This is the first step: connect, browse, and test that a video streams to this TV.</p>
+          <input id="jfServer" type="text" autocomplete="off" placeholder="jelly.example.com" aria-label="Jellyfin server address">
+          <input id="jfUser" type="text" autocomplete="off" placeholder="User name" aria-label="Jellyfin user name" style="margin-top:10px">
+          <input id="jfPass" type="password" autocomplete="off" placeholder="Password" aria-label="Jellyfin password" style="margin-top:10px">
+          <div class="toolbar"><button id="jfLogin">Sign in</button><button class="ghost" id="jfQuick">Use Quick Connect instead</button></div>
+          <p class="sub hide" id="jfCode" style="margin:0"></p>
+        </div>
+        <div id="jfIn" class="hide">
+          <p style="margin:0 0 8px" id="jfWho"></p>
+          <div class="row"><input id="jfSearch" type="text" autocomplete="off" placeholder="Search your library" aria-label="Search Jellyfin"><button class="ghost" id="jfGo">Search</button></div>
+          <div class="listbox" id="jfItems"></div>
+          <div id="jfAddBar" class="hide" style="margin-top:6px">
+            <label for="jfTarget">Add the ticked ones to</label>
+            <select id="jfTarget"></select>
+            <input id="jfNewName" type="text" maxlength="40" autocomplete="off" placeholder="Name the new channel, e.g. jellymovies" aria-label="New Jellyfin channel name" style="margin-top:10px">
+            <div class="toolbar"><button id="jfAdd">Add</button></div>
+          </div>
+          <div class="toolbar"><button class="danger" id="jfOff">Disconnect</button></div>
+        </div>
+        <p class="msg" id="jfmsg"></p>
+      </section>
+      <section class="card hide" id="jfchan">
+        <h2 id="jfchanTitle">Jellyfin channel</h2>
+        <p class="sub" id="jfchanSub" style="margin:0 0 6px"></p>
+        <div class="listbox" id="jfchanItems"></div>
+        <div class="toolbar"><button class="ghost" id="jfchanClose">Close</button></div>
+        <p class="msg" id="jfchanMsg"></p>
       </section>
     </div>
 
@@ -205,6 +254,8 @@
         <label for="setSleep" style="margin-top:10px">Sleep timer (stops the TV after)</label><select id="setSleep"></select>
         <label for="setYtq" style="margin-top:10px">YouTube picture quality (streaming and downloads)</label><select id="setYtq"></select>
         <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="setShuffle" style="width:auto"> Shuffle episodes</label>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px"><input type="checkbox" id="setLive" style="width:auto;margin-top:3px"> <span>Live TV mode <small>Channels run on the clock like broadcast TV: tune in and you join whatever is "on now", partway through, and the channel carries on while you watch another. Each channel plays the same running order round and round (no reshuffling). Needs every video's length, which the TV reads while it is in upload mode.</small></span></label>
+        <div id="liveBox" class="hide" style="margin-top:6px"><p class="sub" id="liveInfo" style="margin:0"></p></div>
         <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="setLookahead" style="width:auto;margin-top:3px"> <span>Faster YouTube changeovers <small>While a streamed video plays, the TV gets the next one ready, so it starts in a few seconds instead of about 12. Uses a little extra memory and processing while you watch.</small></span></label>
         <p class="msg" id="setmsg"></p>
       </section>
@@ -268,6 +319,7 @@
         <h2>YouTube downloader</h2>
         <p class="sub" id="ytdlpLine"></p>
         <div class="row"><button id="ytdlpCheck" class="ghost">Check for a newer yt-dlp</button><button id="ytdlpUpdate" class="hide">Update yt-dlp</button></div>
+        <label class="check" style="margin-top:12px"><input type="checkbox" id="ytdlpAuto"> <span>Update yt-dlp automatically <small>About once a day, when the TV is in upload mode or standby (never while it is playing). Needs Wi-Fi.</small></span></label>
         <p class="msg" id="ytdlpMsg"></p>
       </section>
       <section class="card"><h2>About</h2><p class="sub" id="about"></p></section>
@@ -310,7 +362,7 @@ async function load() {
   state = await api('/api/state');
   $('login').classList.add('hide'); $('app').classList.remove('hide');
   $('tvname').textContent = state.name; document.title = state.name + ' upload';
-  applyTheme(state.theme_css, state.theme_style); renderThemes();
+  applyTheme(state.theme_css, state.theme_style); renderThemes(); if (!window._jfLoaded) { window._jfLoaded = true; jfLoad(); }
   if (document.activeElement !== $('nameIn')) $('nameIn').value = state.name;
   if (document.activeElement !== $('greetIn')) $('greetIn').value = state.greeting;
   $('space').textContent = hr(state.free_bytes) + ' free';
@@ -389,6 +441,120 @@ $('palAdd').onclick = async () => {
   await load();
 };
 
+// ---- Jellyfin ----
+let jfPoll = null;
+function jfGet(action, params) { return api('/api/jf/' + action + (params ? '?' + new URLSearchParams(params) : '')); }
+function jfPost(action, body) { return api('/api/jf/' + action, {method: 'POST', body: JSON.stringify(body || {})}); }
+function jfShow(st) {
+  if (!st.connected) $('jfAddBar').classList.add('hide');
+  $('jfOut').classList.toggle('hide', st.connected); $('jfIn').classList.toggle('hide', !st.connected);
+  if (st.connected) $('jfWho').textContent = 'Connected to ' + st.server + ' as ' + st.user + (st.version ? ' (Jellyfin ' + st.version + ')' : '') + '.';
+  if (st.connected && !$('jfItems').children.length) jfList();
+}
+async function jfLoad() { try { jfShow(await jfGet('status')); } catch (e) {} }
+async function jfList(extra) {
+  const box = $('jfItems'); box.innerHTML = ''; say($('jfmsg'), '');
+  try {
+    const r = await jfGet('items', {q: $('jfSearch').value, ...(extra || {})});
+    if (!r.items.length) box.textContent = 'Nothing found.';
+    for (const it of r.items) jfRow(box, it.name + (it.year ? ' (' + it.year + ')' : ''), it.kind, it.kind === 'Series' ? () => jfEpisodes(it) : () => jfTest(it), false, it);
+    await jfTargets();
+  } catch (e) { say($('jfmsg'), e.message, 'bad'); }
+}
+const jfPicked = new Map();
+function jfCount() { const n = jfPicked.size; $('jfAdd').textContent = n ? 'Add ' + n + ' selected' : 'Add'; $('jfAdd').disabled = !n; }
+function jfRow(box, title, kind, act, indent, pick) {
+  const d = document.createElement('div'); d.className = 'item';
+  if (pick) {
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = jfPicked.has(pick.id); cb.setAttribute('aria-label', 'Add ' + title);
+    cb.onchange = () => { if (cb.checked) jfPicked.set(pick.id, title); else jfPicked.delete(pick.id); jfCount(); };
+    d.appendChild(cb);
+  }
+  const t = document.createElement('div'); t.className = 't'; t.textContent = title; if (indent) t.style.paddingLeft = '14px';
+  const m = document.createElement('div'); m.className = 'm'; m.textContent = kind; t.appendChild(m);
+  const b = document.createElement('button'); b.className = 'ghost'; b.style.padding = '6px 10px'; b.style.fontSize = '13px';
+  b.textContent = kind === 'Series' ? 'Episodes' : kind === 'BoxSet' || kind === 'Playlist' ? '' : 'Test stream'; b.onclick = act; if (!b.textContent) b.classList.add('hide');
+  d.appendChild(t); d.appendChild(b); box.appendChild(d);
+}
+async function jfEpisodes(series) {
+  const box = $('jfItems'); box.innerHTML = '';
+  try {
+    const r = await jfGet('episodes', {id: series.id});
+    const back = document.createElement('button'); back.className = 'ghost'; back.textContent = '< Back'; back.onclick = () => jfList(); box.appendChild(back);
+    for (const e of r.episodes.slice(0, 120)) jfRow(box, 'S' + (e.season || '?') + 'E' + (e.episode || '?') + '  ' + e.title, 'Episode', () => jfTest(e), true, e);
+  } catch (e) { say($('jfmsg'), e.message, 'bad'); }
+}
+async function jfTest(item) {
+  say($('jfmsg'), 'Asking the server for the start of the stream (this can take a few seconds)...', 'ok');
+  try {
+    const r = await jfPost('test', {id: item.id});
+    if (r.note) say($('jfmsg'), r.note, 'bad'); else
+    say($('jfmsg'), (r.ok ? 'It works: ' : 'The server answered, but it may not be a video: ') + r.bytes + ' bytes of ' + r.content_type + (r.first_byte_seconds != null ? ', first data after ' + r.first_byte_seconds + ' s' : '') + '.', r.ok ? 'ok' : 'bad');
+  } catch (e) { say($('jfmsg'), e.message, 'bad'); }
+}
+async function jfTargets() {
+  try {
+    const r = await jfGet('channels'); const sel = $('jfTarget'), keep = sel.value;
+    sel.innerHTML = ''; sel.add(new Option('A new channel...', ''));
+    for (const c of r.channels) sel.add(new Option(c.label + ' (' + c.count + ' videos)', c.name));
+    if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+    $('jfNewName').classList.toggle('hide', sel.value !== '');
+    $('jfAddBar').classList.remove('hide'); jfCount();
+  } catch (e) {}
+}
+$('jfTarget').onchange = () => $('jfNewName').classList.toggle('hide', $('jfTarget').value !== '');
+$('jfAdd').onclick = async () => {
+  if (!jfPicked.size) return;
+  const existing = $('jfTarget').value;
+  say($('jfmsg'), 'Adding... (a long series can take a few seconds)', 'ok');
+  try {
+    const r = await jfPost('add', {channel: existing, new: $('jfNewName').value, ids: [...jfPicked.keys()]});
+    say($('jfmsg'), 'Added ' + r.added + ' video' + (r.added === 1 ? '' : 's') + ' to ' + r.channel + (r.skipped ? ' (' + r.skipped + ' were already there)' : '') + '. It has ' + r.total + ' now.', 'ok');
+    jfPicked.clear(); $('jfNewName').value = ''; await load(); await jfList();
+  } catch (e) { say($('jfmsg'), e.message, 'bad'); }
+};
+async function openJfChannel(name, label) {
+  $('jfchan').classList.remove('hide'); $('jfchanTitle').textContent = label; say($('jfchanMsg'), '');
+  const box = $('jfchanItems'); box.innerHTML = '';
+  try {
+    const r = await jfGet('channel', {channel: name});
+    $('jfchanSub').textContent = r.count + ' video' + (r.count === 1 ? '' : 's') + (r.seconds ? '  -  ' + hours(r.seconds) : '') + '. They stream from your Jellyfin server; nothing is stored on the TV.';
+    for (const it of r.items) {
+      const d = document.createElement('div'); d.className = 'item';
+      const t = document.createElement('div'); t.className = 't'; t.textContent = it.title;
+      const m = document.createElement('div'); m.className = 'm'; m.textContent = (it.kind || 'Video') + (it.seconds ? '  -  ' + Math.round(it.seconds / 60) + ' min' : ''); t.appendChild(m);
+      const b = document.createElement('button'); b.className = 'danger'; b.textContent = 'Remove'; b.style.padding = '6px 10px'; b.style.fontSize = '13px';
+      b.onclick = async () => {
+        try { await jfPost('remove', {channel: name, ids: [it.id]}); await load(); await openJfChannel(name, label); }
+        catch (e) { say($('jfchanMsg'), e.message, 'bad'); }
+      };
+      d.append(t, b); box.appendChild(d);
+    }
+    if (!r.items.length) box.textContent = 'No videos left. Add some from the Jellyfin card below.';
+    $('jfchan').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  } catch (e) { say($('jfchanMsg'), e.message, 'bad'); }
+}
+$('jfchanClose').onclick = () => $('jfchan').classList.add('hide');
+$('jfLogin').onclick = async () => {
+  say($('jfmsg'), 'Signing in...', 'ok');
+  try { jfShow(await jfPost('connect', {server: $('jfServer').value, username: $('jfUser').value, password: $('jfPass').value})); $('jfPass').value = ''; say($('jfmsg'), 'Connected.', 'ok'); }
+  catch (e) { say($('jfmsg'), e.message, 'bad'); }
+};
+$('jfQuick').onclick = async () => {
+  try {
+    const r = await jfPost('quick', {server: $('jfServer').value});
+    $('jfCode').classList.remove('hide'); $('jfCode').textContent = 'On a device already signed in to Jellyfin, open Settings, then Quick Connect, and enter the code ' + r.code + '. Waiting...';
+    clearInterval(jfPoll);
+    jfPoll = setInterval(async () => {
+      try { const p = await jfGet('quick_poll'); if (p.state === 'signed_in') { clearInterval(jfPoll); $('jfCode').classList.add('hide'); jfShow(p); say($('jfmsg'), 'Connected.', 'ok'); } }
+      catch (e) { clearInterval(jfPoll); say($('jfmsg'), e.message, 'bad'); }
+    }, 2500);
+  } catch (e) { say($('jfmsg'), e.message, 'bad'); }
+};
+$('jfGo').onclick = () => jfList();
+$('jfSearch').addEventListener('keydown', e => { if (e.key === 'Enter') jfList(); });
+$('jfOff').onclick = async () => { try { jfShow(await jfPost('disconnect')); $('jfItems').innerHTML = ''; say($('jfmsg'), 'Disconnected.', 'ok'); } catch (e) { say($('jfmsg'), e.message, 'bad'); } };
+
 const OFF_LABELS = {youtube_height: v => v + 'p' + (v === 360 ? '  (recommended: plenty for this screen)' : ''), auto_dim_min: v => v ? v + ' min' : 'Never', sleep_timer_min: v => v ? v + ' min' : 'Off', brightness: v => v + '%', night_brightness: v => v + '%', night_schedule: v => v === 'sun' ? 'At sunset and sunrise' : 'At set times'};
 function fillSelect(id, key, options, value) {
   const sel = $(id); if (document.activeElement === sel) return;
@@ -401,7 +567,14 @@ function renderSettings() {
   fillSelect('setSleep', 'sleep_timer_min', st.options.sleep_timer_min, st.values.sleep_timer_min);
   fillSelect('setYtq', 'youtube_height', st.options.youtube_height, st.values.youtube_height);
   $('setShuffle').checked = !!st.values.shuffle;
+  $('ytdlpAuto').checked = st.values.ytdlp_auto !== false;
   const v = st.values, night = st.night || {};
+  $('setLive').checked = !!v.live_tv; $('liveBox').classList.toggle('hide', !v.live_tv);
+  if (v.live_tv && st.live) {
+    const ready = st.live.channels.filter(c => c.ready), not = st.live.channels.filter(c => !c.ready);
+    $('liveInfo').textContent = (ready.length ? 'Live now: ' + ready.map(c => c.label + ' (a ' + c.minutes + ' min loop)').join(', ') + '. ' : 'No channel is ready yet. ') +
+      (not.length ? 'Playing as usual until their lengths are known: ' + not.map(c => c.label + (c.missing ? ' (' + c.missing + ' video' + (c.missing === 1 ? '' : 's') + ' not read yet)' : '')).join(', ') + '.' : '');
+  }
   $('setNight').checked = !!v.night_mode; $('nightBox').classList.toggle('hide', !v.night_mode);
   fillSelect('setNightLevel', 'night_brightness', st.options.night_brightness, v.night_brightness);
   fillSelect('setNightMode', 'night_schedule', st.options.night_schedule, v.night_schedule);
@@ -445,7 +618,12 @@ $('useZone').onclick = async () => {
 $('saveNightLoc').onclick = () => saveSetting('night_location', $('setNightLoc').value);
 $('setNightFrom').onchange = () => saveSetting('night_from', $('setNightFrom').value);
 $('setNightTo').onchange = () => saveSetting('night_to', $('setNightTo').value);
+$('ytdlpAuto').onchange = async () => {
+  try { await api('/api/settings', {method: 'POST', body: JSON.stringify({ytdlp_auto: $('ytdlpAuto').checked})}); say($('ytdlpMsg'), $('ytdlpAuto').checked ? 'It will update itself.' : 'It will only update when you press the button.', 'ok'); }
+  catch (e) { say($('ytdlpMsg'), e.message, 'bad'); }
+};
 $('setShuffle').onchange = () => saveSetting('shuffle', $('setShuffle').checked);
+$('setLive').onchange = () => saveSetting('live_tv', $('setLive').checked);
 $('setLookahead').onchange = () => saveSetting('youtube_lookahead', $('setLookahead').checked);
 function dur(sec) { const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60); return (d ? d + ' d ' : '') + (h || d ? h + ' h ' : '') + m + ' min'; }
 async function loadStatus() {
@@ -763,19 +941,106 @@ function renderScan() {
   if (!s.running && scanTimer) { clearInterval(scanTimer); scanTimer = null; }
 }
 $('rescan').onclick = async () => { try { await api('/api/library/rescan', {method: 'POST', body: '{}'}); await load(); } catch (e) { $('scanline').textContent = e.message; } };
+const SHUFFLE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>';
+let openPop = null;
+function closePop() { if (openPop) { openPop.remove(); openPop = null; } }
+document.addEventListener('click', closePop);
+function orderMenu(row, c) {
+  closePop();
+  const pop = document.createElement('div'); pop.className = 'pop'; pop.onclick = e => e.stopPropagation();
+  const cur = c.order || 'default', liveOn = !!(state.settings && state.settings.values.live_tv);
+  const choose = async v => {
+    closePop();
+    try { await api('/api/channel/order', {method: 'POST', body: JSON.stringify({channel: c.name, order: v})}); say($('chanmsg'), c.label + ': saved. It applies when the TV goes back to playing.', 'ok'); await load(); }
+    catch (e) { say($('chanmsg'), e.message, 'bad'); }
+  };
+  for (const [v, t] of [['shuffle', 'Shuffled'], ['order', 'In order'], ['default', "Follow the TV's Shuffle setting"]]) {
+    const b = document.createElement('button'); b.textContent = t; b.className = cur === v ? 'on' : ''; b.onclick = () => choose(v); pop.append(b);
+  }
+  if (liveOn) {
+    pop.append(document.createElement('hr'));
+    const r = document.createElement('button'); r.textContent = 'Reshuffle (new live running order)'; r.disabled = cur === 'order';
+    r.onclick = async () => {
+      closePop();
+      try { await api('/api/channel/reshuffle', {method: 'POST', body: JSON.stringify({channel: c.name})}); say($('chanmsg'), c.label + ' has a new running order.', 'ok'); }
+      catch (e) { say($('chanmsg'), e.message, 'bad'); }
+    };
+    pop.append(r);
+  }
+  row.append(pop); openPop = pop;
+}
+const ORDER_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v18M3 7l4-4 4 4M17 21V3M13 17l4 4 4-4"/></svg>';
+const GRIP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"/><circle cx="15" cy="6" r="1.8"/><circle cx="9" cy="12" r="1.8"/><circle cx="15" cy="12" r="1.8"/><circle cx="9" cy="18" r="1.8"/><circle cx="15" cy="18" r="1.8"/></svg>';
+let reorderMode = false;
+function renumber() { [...$('channels').querySelectorAll('.chan')].forEach((r, i) => { const n = r.querySelector('.chnum'); if (n) n.textContent = i + 1; }); }
+async function saveChannelOrder() {
+  const names = [...$('channels').querySelectorAll('.chan')].map(r => r.dataset.name);
+  try { await api('/api/channels/order', {method: 'POST', body: JSON.stringify({order: names})}); say($('chanmsg'), 'Saved. Swiping on the TV now follows this order.', 'ok'); }
+  catch (e) { say($('chanmsg'), e.message, 'bad'); }
+  await load();
+}
+function dragRow(handle, ev) {
+  const row = handle.closest('.chan'), box = $('channels');
+  ev.preventDefault(); handle.setPointerCapture(ev.pointerId); row.classList.add('dragging');
+  let last = ev.clientY, offset = 0;
+  const place = () => {
+    for (let guard = 0; guard < 50; guard++) {                      // a quick drag can cross several rows in one move
+      const next = row.nextElementSibling, prev = row.previousElementSibling;
+      if (next && offset > next.offsetHeight / 2) { offset -= next.offsetHeight; box.insertBefore(next, row); }
+      else if (prev && offset < -prev.offsetHeight / 2) { offset += prev.offsetHeight; box.insertBefore(row, prev); }
+      else break;
+    }
+    renumber();
+    row.style.transform = 'translateY(' + offset + 'px)';
+  };
+  const move = e => {
+    offset += e.clientY - last; last = e.clientY; place();
+    if (e.clientY < 70) window.scrollBy(0, -12); else if (e.clientY > window.innerHeight - 70) window.scrollBy(0, 12);
+  };
+  const up = () => {
+    handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up);
+    row.classList.remove('dragging'); row.style.transform = ''; saveChannelOrder();
+  };
+  handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', up); handle.addEventListener('pointercancel', up);
+}
+function nudge(row, dir) {
+  const box = $('channels'), other = dir < 0 ? row.previousElementSibling : row.nextElementSibling;
+  if (!other) return;
+  if (dir < 0) box.insertBefore(row, other); else box.insertBefore(other, row);
+  renumber(); row.querySelector('.grip').focus(); clearTimeout(nudge.t); nudge.t = setTimeout(saveChannelOrder, 600);
+}
+$('reorderBtn').innerHTML = ORDER_ICON;
+$('reorderBtn').onclick = () => { reorderMode = !reorderMode; $('reorderBtn').classList.toggle('set', reorderMode); $('reorderHelp').classList.toggle('hide', !reorderMode); closePop(); renderChannels(); };
 function renderChannels() {
   renderScan();
   const box = $('channels'); box.textContent = '';
   if (!state.channels.length) box.append(el('p', 'sub', 'No channels yet. Create one below, then add videos to it.'));
   for (const c of state.channels) {
-    const row = el('div', 'chan'), left = el('div'), right = el('span', 'badge' + (c.kind === 'youtube' ? ' yt' : ''), c.kind === 'youtube' ? 'YouTube' : 'Folder');
+    const row = el('div', 'chan' + (reorderMode ? ' reorder' : '')), left = el('div'), right = el('span', 'badge' + (c.kind === 'youtube' ? ' yt' : ''), c.kind === 'youtube' ? 'YouTube' : c.kind === 'jellyfin' ? 'Jellyfin' : 'Folder');
     left.append(el('div', 'nm', c.label));
     let sub = c.count + ' video' + (c.count === 1 ? '' : 's');
     if (c.kind !== 'youtube' && c.library && c.library.seconds) sub += '  -  ' + hours(c.library.seconds) + (c.library.unread ? '  (' + c.library.unread + ' not read yet)' : '');
     if (c.kind === 'youtube') { const y = c.youtube; sub = y.done + ' on the TV' + (y.waiting ? ', ' + y.waiting + ' waiting' : '') + (y.error ? ', ' + y.error + ' with problems' : '') + (y.new ? ', ' + y.new + ' new' : ''); }
+    if (c.kind === 'jellyfin') sub = c.jellyfin.count + ' video' + (c.jellyfin.count === 1 ? '' : 's') + (c.jellyfin.seconds ? '  -  ' + hours(c.jellyfin.seconds) : '');
     left.append(el('div', 'sub2', sub));
-    row.append(left, right);
+    row.dataset.name = c.name;
+    const num = el('span', 'chnum', String(state.channels.indexOf(c) + 1)); num.title = 'Channel number';
+    if (reorderMode) {
+      const grip = document.createElement('button'); grip.className = 'grip'; grip.innerHTML = GRIP_ICON; grip.setAttribute('aria-label', 'Move ' + c.label + ' (drag, or press the up and down arrow keys)');
+      grip.addEventListener('pointerdown', e => dragRow(grip, e));
+      grip.addEventListener('keydown', e => { if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); nudge(row, e.key === 'ArrowUp' ? -1 : 1); } });
+      const mid = el('div'); mid.style.cssText = 'flex:1 1 auto;min-width:0'; mid.append(left);
+      row.style.justifyContent = 'flex-start'; row.append(grip, num, mid);
+      box.append(row); continue;
+    }
+    const ord = document.createElement('button'); ord.className = 'ordbtn' + (c.order ? ' set' : ''); ord.innerHTML = SHUFFLE_ICON;
+    ord.title = 'Play order: ' + ({shuffle: 'shuffled', order: 'in order'}[c.order] || "follows the TV's Shuffle setting"); ord.setAttribute('aria-label', ord.title);
+    ord.onclick = e => { e.stopPropagation(); if (openPop && openPop.parentNode === row) closePop(); else orderMenu(row, c); };
+    const side = el('div'); side.style.cssText = 'display:flex;gap:8px;align-items:center'; side.append(ord, right);
+    const mid = el('div'); mid.style.cssText = 'flex:1 1 auto;min-width:0'; mid.append(left);
+    row.style.justifyContent = 'flex-start'; row.append(num, mid, side);
     if (c.kind === 'youtube') row.onclick = () => openYt(c.name);
+    else if (c.kind === 'jellyfin') row.onclick = () => openJfChannel(c.name, c.label);
     else row.onclick = () => { document.querySelector('#tabs [data-tab=upload]').click(); $('channel').value = c.name; };
     box.append(row);
   }

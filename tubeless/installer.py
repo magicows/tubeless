@@ -26,6 +26,7 @@ import io
 import os
 import pwd
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -337,6 +338,8 @@ class Runner:
         self.dry_run = dry_run
         self.say = say
         self.stall_seconds = stall_seconds
+        self.tee: Optional[Callable[[str], None]] = None        # also told the last line of a command's output now and then (the install page)
+        self._tee_at, self._tee_last = 0.0, ""
 
     def run(self, *cmd: str, check: bool = True, env: Optional[dict] = None) -> "subprocess.CompletedProcess":
         if self.dry_run:
@@ -383,6 +386,10 @@ class Runner:
                     tail = text.replace("\r", "\n").strip().splitlines()
                     if tail:
                         last_line = tail[-1].strip()[:120]
+                        now = time.time()
+                        if self.tee is not None and last_line != self._tee_last and now - self._tee_at >= 1.0:
+                            self._tee_at, self._tee_last = now, last_line
+                            self.tee(last_line)
                 elif proc.poll() is not None:
                     break
                 quiet = time.time() - last_output
@@ -734,26 +741,92 @@ STEPS: List[Tuple[str, Callable[[Context], None]]] = [
 ]
 
 
-def install_all(ctx: Context) -> int:
+def _chown_one(path: Path, user: str) -> None:
+    info = pwd.getpwnam(user)
+    try:
+        os.chown(path, info.pw_uid, info.pw_gid)
+    except OSError:
+        pass
+
+
+def start_install_page(ctx: Context):
+    """Start the install-time page (installweb.py) and tell the terminal where it is. Returns (page, progress), or (None, None) if
+    it could not start: the install carries on without it."""
+    from .installweb import InstallPage, Progress, local_ip
+    progress = Progress([title for title, _ in STEPS])
+    page = InstallPage(ctx, progress, chown=lambda p: _chown_one(p, ctx.user))
+    try:
+        port = page.start()
+    except OSError as e:
+        ctx.say(f"(no install page: {e})")
+        return None, None
+    original = ctx.runner.say
+    ctx.runner.say = lambda text: (original(text), progress.say(text))
+    ctx.runner.tee = progress.say
+    host = socket.gethostname()
+    ctx.say("")
+    ctx.say("While this runs, you can watch it and set the TV up from a phone or laptop on the same network:")
+    ctx.say(f"    http://{local_ip()}:{port}      (or http://{host}.local:{port})      PIN: {page.pin}")
+    ctx.say("")
+    return page, progress
+
+
+def install_all(ctx: Context, live: bool = False) -> int:
+    """Run every step. With `live`, a web page shows progress and lets the name, YouTube support and standby picture be set meanwhile."""
+    page, progress = start_install_page(ctx) if live else (None, None)
+    try:
+        return _install_steps(ctx, progress)
+    finally:
+        if page is not None:
+            if progress.finished is not None:
+                time.sleep(installweb_linger())                      # leave the last state up for a moment
+            page.stop()
+
+
+def installweb_linger() -> float:
+    from .installweb import LINGER
+    return LINGER
+
+
+def _install_steps(ctx: Context, progress) -> int:
     ctx.say(f"Tubeless installer: user {ctx.user}, TV name {ctx.name!r}" + ("  [DRY RUN: nothing will be changed]" if ctx.dry_run else ""))
     for n, (title, fn) in enumerate(STEPS, 1):
         ctx.say(f"\n[{n}/{len(STEPS)}] {title}")
+        if progress is not None:
+            progress.begin(n - 1)
+            if fn is step_app:
+                progress.lock("name", "It was used when the TV's app was installed; rename it later on the TV's upload page.")
+            elif fn is step_youtube:
+                progress.lock("youtube", "That step has started; you can add YouTube support later (see the README).")
         try:
             fn(ctx)
         except InstallError as e:
             ctx.say(f"\n!! {e}")
+            if progress is not None:
+                progress.end(n - 1, False)
+                progress.finish(False, str(e))
             return 1
         except subprocess.CalledProcessError as e:
             ctx.say(f"\n!! a command failed: {' '.join(map(str, e.cmd))} (exit {e.returncode})")
+            if progress is not None:
+                progress.end(n - 1, False)
+                progress.finish(False, f"A command failed: {' '.join(map(str, e.cmd))} (exit {e.returncode}). See the terminal.")
             return 1
+        if progress is not None:
+            progress.end(n - 1)
     ctx.say("")
     if ctx.dry_run:
         ctx.say("That was a dry run. Run again without --dry-run to make these changes.")
+        done = "That was a dry run."
     elif ctx.reboot_needed:
         ctx.say("Done. Reboot now (sudo reboot): the display, touch and audio changes take effect at boot.")
+        done = "Done. Reboot the Pi now (sudo reboot): the display, touch and audio changes take effect at boot."
     else:
         ctx.say("Done. Restart with: sudo systemctl restart tubeless")
+        done = "Done. Restart with: sudo systemctl restart tubeless"
     ctx.say(f"Put your videos in {ctx.home / 'videos'} (one folder per channel), then reboot or restart.")
+    if progress is not None:
+        progress.finish(True, done + f" Put your videos in {ctx.home / 'videos'} (one folder per channel), or upload them from the TV's page.")
     return 0
 
 
@@ -777,7 +850,7 @@ def cmd_all(args) -> int:
     ctx = Context(user=user, home=home, source=source, name=args.name, boot_dir=Path(args.boot_dir) if args.boot_dir else None,
                   dry_run=args.dry_run, skip_sd_test=args.skip_sd_test, allow_changed_overlays=args.allow_changed_overlays,
                   with_youtube=args.with_youtube, runner=Runner(args.dry_run))
-    return install_all(ctx)
+    return install_all(ctx, live=not args.dry_run and not args.no_page)
 
 
 def cmd_overlays(args) -> int:
@@ -833,6 +906,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("all", help="do everything (run with sudo)")
     p.add_argument("--user", help="the user the TV runs as (default: the user who ran sudo)")
     p.add_argument("--name", default="Tubeless", help="the TV's display name (default: Tubeless)")
+    p.add_argument("--no-page", action="store_true", help="don't start the web page that shows progress and lets you set the TV up while it installs")
     p.add_argument("--source", help="the checkout to install from (default: the one this file is in)")
     p.add_argument("--boot-dir")
     p.add_argument("--dry-run", action="store_true", help="show what would be done, change nothing")

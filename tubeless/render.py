@@ -228,13 +228,22 @@ def render_menu_landscape(items: Sequence, selected: int, hw: Hardware, title: s
         _rrect(d, (_s(px0 + t.shadow), _s(py0 + t.shadow), _s(px1 + t.shadow), _s(py1 + t.shadow)), _s(t.panel_radius), ink)
     _rrect(d, (_s(px0), _s(py0), _s(px1), _s(py1)), _s(t.panel_radius), panel, outline=ink, width=_s(t.outline))
 
-    title_font, sub_font = fonts.load(fonts.SANS_BOLD, 28 * SS), fonts.load(fonts.SANS, 20 * SS)
     room = _s(button_rect(HEADER_BUTTONS[0])[0] - 16) - _s(46)    # from the left margin to the first button
     gap = _s(14)
+    # Both names at full size if they fit; otherwise a little smaller before anything is cut short (the folder name can be long).
+    for title_px, sub_px in ((28, 20), (24, 18), (21, 16)):
+        title_font, sub_font = fonts.load(fonts.SANS_BOLD, title_px * SS), fonts.load(fonts.SANS, sub_px * SS)
+        need = d.textlength(title, font=title_font) + (gap + d.textlength(subtitle, font=sub_font) if subtitle else 0)
+        if need <= room:
+            break
     if subtitle:
-        subtitle = fit_text(d, subtitle, sub_font, room * 0.4)
-        room -= d.textlength(subtitle, font=sub_font) + gap
-    title = fit_text(d, title, title_font, room)
+        tw, sw = d.textlength(title, font=title_font), d.textlength(subtitle, font=sub_font)
+        if tw + gap + sw > room:                                  # still too long at the smallest size: the title keeps what it needs
+            title_room = min(tw, max(room * 0.5, room - gap - sw))
+            title = fit_text(d, title, title_font, title_room)
+            subtitle = fit_text(d, subtitle, sub_font, room - gap - d.textlength(title, font=title_font))
+    else:
+        title = fit_text(d, title, title_font, room)
     d.text((_s(46), _s(52)), title, font=title_font, fill=title_col, anchor="ls")
     if subtitle:
         d.text((_s(46) + d.textlength(title, font=title_font) + gap, _s(52)), subtitle, font=sub_font, fill=dim, anchor="ls")

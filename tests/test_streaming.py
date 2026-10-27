@@ -163,3 +163,81 @@ def test_how_long_a_stream_took_to_start_is_logged(tmp_path, caplog):
         r.stop()
     line = [x.getMessage() for x in caplog.records if "stream started playing" in x.getMessage()][0]
     assert "s after the TV reached it" in line
+
+
+# ---- starting up before the Wi-Fi is ---------------------------------------------------------------------------------
+def _boot_offline(tmp_path, wifi, wait=3.0, channels=None):
+    stream_channel(tmp_path / "videos")
+    rig = Rig(tmp_path, channels=channels or {"3.placeholder": ["x.mp4"]}, start=False, wifi=wifi)
+    rig.app.net_wait_max, rig.app.net_settle = wait, 0.0
+    return rig
+
+
+def test_a_streaming_channel_waits_for_the_network_after_a_start_instead_of_skipping_through_its_videos(tmp_path):
+    import threading
+    wifi = FakeWifi(ip=None, saved=True)
+    rig = _boot_offline(tmp_path, wifi)
+    try:
+        rig.app.channel_index = [c.name for c in rig.app.channels()].index("3.youtube")
+        t = threading.Thread(target=rig.app.start_playback, daemon=True)
+        t.start()
+        t.join(0.6)
+        assert t.is_alive() and not rig.player.alive()                    # still waiting: mpv has not been started on the YouTube videos
+        wifi.ip = "192.168.1.50"                                          # the Wi-Fi comes up
+        t.join(4)
+        assert not t.is_alive() and rig.player.alive()
+    finally:
+        rig.stop()
+
+
+def test_it_gives_up_waiting_after_a_while_and_starts_anyway(tmp_path):
+    import time
+    wifi = FakeWifi(ip=None, saved=True)
+    rig = _boot_offline(tmp_path, wifi, wait=0.4)
+    try:
+        rig.app.channel_index = [c.name for c in rig.app.channels()].index("3.youtube")
+        t0 = time.time()
+        rig.app.start_playback()
+        assert 0.3 <= time.time() - t0 < 3 and rig.player.alive()
+    finally:
+        rig.stop()
+
+
+def test_it_does_not_wait_for_a_folder_channel_or_when_the_network_is_up_or_after_the_first_start(tmp_path):
+    import time
+    for wifi, channel in ((FakeWifi(ip=None, saved=True), "3.placeholder"), (FakeWifi(ip="192.168.1.50"), "3.youtube")):
+        rig = _boot_offline(tmp_path / wifi.ip.__class__.__name__, wifi)
+        try:
+            rig.app.channel_index = [c.name for c in rig.app.channels()].index(channel)
+            t0 = time.time()
+            rig.app.start_playback()
+            assert time.time() - t0 < 0.3
+        finally:
+            rig.stop()
+    rig = _boot_offline(tmp_path / "again", FakeWifi(ip=None, saved=True))
+    try:
+        rig.app.channel_index = [c.name for c in rig.app.channels()].index("3.youtube")
+        rig.app._net_waited = True                                        # a later restart (a change of channel, a crash) never waits
+        t0 = time.time()
+        rig.app.start_playback()
+        assert time.time() - t0 < 0.3
+    finally:
+        rig.stop()
+
+
+def test_a_dead_chip_that_kept_its_address_counts_as_no_network(tmp_path):
+    import threading
+    wifi = FakeWifi(ip="192.168.1.50", saved=True)
+    wifi.zombie = True
+    rig = _boot_offline(tmp_path, wifi)
+    try:
+        rig.app.channel_index = [c.name for c in rig.app.channels()].index("3.youtube")
+        t = threading.Thread(target=rig.app.start_playback, daemon=True)
+        t.start()
+        t.join(0.6)
+        assert t.is_alive()
+        wifi.zombie = False
+        t.join(4)
+        assert not t.is_alive()
+    finally:
+        rig.stop()

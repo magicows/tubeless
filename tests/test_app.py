@@ -644,3 +644,30 @@ def test_the_youtube_quality_is_a_setting_that_defaults_to_360p_and_reaches_the_
         r.stop()
     again = Rig(tmp_path, ytdlp=fake, start=False)
     assert again.app.youtube_height == 240                                      # kept across a restart
+
+
+def test_dragging_channels_into_a_new_order_renumbers_them_and_keeps_the_tv_on_its_channel(rig):
+    assert [c.name for c in rig.app.channels()] == ["1.cartoons", "2.nights"]
+    rig.app.switch_channel(1)                                                      # watching channel 2
+    assert wait_for(lambda: rig.app.current_channel().name == "2.nights")
+    rig.app.set_channel_list(["2.nights", "1.cartoons"])
+    assert [c.name for c in rig.app.channels()] == ["2.nights", "1.cartoons"]
+    assert rig.app.channel_index == 0 and rig.app.current_channel().name == "2.nights"      # still on the same channel, now number 1
+    assert wait_for(lambda: rig.app.settings.get("channel_list") == ["2.nights", "1.cartoons"])
+    assert [c["name"] for c in rig.app.web_state()["channels"]] == ["2.nights", "1.cartoons"]
+    rig.app.set_channel_list(["1.cartoons", "1.cartoons", "gone"])                 # repeats and strangers are dropped; a channel left out follows
+    assert [c.name for c in rig.app.channels()] == ["1.cartoons", "2.nights"]
+    for bad in (None, "x", [1, 2], ["nothing", "here"]):
+        with pytest.raises(ValueError):
+            rig.app.set_channel_list(bad)
+
+
+def test_the_channel_numbers_are_remembered_across_a_restart(tmp_path):
+    from rig import Rig
+    r = Rig(tmp_path)
+    try:
+        r.app.set_channel_list(["2.nights", "1.cartoons"])
+        assert wait_for(lambda: r.app.settings.get("channel_list") == ["2.nights", "1.cartoons"])
+    finally:
+        r.stop()
+    assert [c.name for c in Rig(tmp_path, start=False).app.channels()] == ["2.nights", "1.cartoons"]

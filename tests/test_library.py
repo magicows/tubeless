@@ -140,3 +140,16 @@ def test_a_youtube_channel_in_order_follows_its_playlist_not_its_file_names(tmp_
     assert sorted(lib.videos(channel))[0].startswith("Apple")                                                  # file names would say otherwise
     shuffled = plans.plan(channel, True)
     assert sorted(shuffled.order) == sorted(lib.videos(channel))
+
+
+def test_channels_can_be_numbered_by_a_saved_order_and_the_rest_follow_by_name(tmp_path):
+    for name in ("1.cartoons", "2.nights", "3.youtube", "10.last", "extra"):
+        (tmp_path / name).mkdir()
+    lib = Library(tmp_path)
+    assert [c.name for c in lib.channels()] == ["1.cartoons", "2.nights", "3.youtube", "10.last", "extra"]       # as before
+    lib.order = ["3.youtube", "1.cartoons", "ghost"]                                                               # a name that has gone is ignored
+    assert [c.name for c in lib.channels()] == ["3.youtube", "1.cartoons", "2.nights", "10.last", "extra"]
+    (tmp_path / "0.new").mkdir()
+    assert [c.name for c in lib.channels()][-1] == "extra" and [c.name for c in lib.channels()][:2] == ["3.youtube", "1.cartoons"]
+    lib.order = []
+    assert [c.name for c in lib.channels()][0] == "0.new"

@@ -558,3 +558,103 @@ def test_downloads_ask_yt_dlp_for_the_chosen_quality(tmp_path, monkeypatch):
         yt.download("aaaaaaaaaaa", tmp_path, "x", lambda f, s: None, threading.Event())
         fmt = seen["cmd"][seen["cmd"].index("-f") + 1]
         assert f"height<={height}" in fmt and "height<=480" not in fmt
+
+
+# ---- keeping yt-dlp up to date by itself ----------------------------------------------------------------------------------------
+def _auto_rig(tmp_path, installed="2024.01.01", latest="2025.02.02", **kw):
+    from rig import Rig
+    from tubeless.youtube import FakeYtDlp
+    fake = FakeYtDlp({})
+    fake.version_now = installed
+    fake.can_update_it = True
+    r = Rig(tmp_path, ytdlp=fake, **kw)
+    r.app.ytdlp_auto_every = 0.0
+    r.app.ytdlp_fetch_json = lambda url: {"tag_name": latest}
+    return r, fake
+
+
+def test_it_is_on_by_default_and_updates_when_the_tv_goes_into_standby(tmp_path):
+    import time
+    from rig import wait_for
+    r, fake = _auto_rig(tmp_path)
+    try:
+        assert r.app.web_settings()["values"]["ytdlp_auto"] is True
+        r.app.enter_standby()
+        assert wait_for(lambda: fake.version_now != "2024.01.01", timeout=5)          # the fake's update() moves it on
+        assert wait_for(lambda: r.app.settings.get("ytdlp_auto_at") is not None)
+        assert r.app._ytdlp_auto_running is False
+    finally:
+        r.stop()
+
+
+def test_it_leaves_a_current_yt_dlp_alone_and_looks_only_once_a_day(tmp_path):
+    from rig import wait_for
+    r, fake = _auto_rig(tmp_path, installed="2025.02.02", latest="2025.02.02")
+    try:
+        calls = []
+        real = fake.update
+        fake.update = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+        r.app.enter_standby()
+        assert wait_for(lambda: r.app.settings.get("ytdlp_auto_at") is not None)
+        assert wait_for(lambda: not r.app._ytdlp_auto_running)
+        assert calls == []                                                           # already the newest: nothing to do
+        fetched = []
+        r.app.ytdlp_fetch_json = lambda url: (fetched.append(1), {"tag_name": "2030.01.01"})[1]
+        r.app.ytdlp_auto_every = 24 * 3600.0
+        r.app._auto_update_ytdlp()
+        assert fetched == []                                                         # it already looked today
+    finally:
+        r.stop()
+
+
+def test_the_checkbox_turns_it_off_and_it_never_runs_without_a_network_or_during_downloads(tmp_path):
+    from rig import wait_for
+    r, fake = _auto_rig(tmp_path)
+    try:
+        r.app.set_web_setting("ytdlp_auto", False)
+        assert r.app.web_settings()["values"]["ytdlp_auto"] is False
+        with pytest.raises(ValueError):
+            r.app.set_web_setting("ytdlp_auto", "yes")
+        r.app.enter_standby()
+        import time
+        time.sleep(0.3)
+        assert fake.version_now == "2024.01.01" and r.app.settings.get("ytdlp_auto_at") is None
+        r.app.set_web_setting("ytdlp_auto", True)
+        r.app.online = lambda: False                                                 # no network: it waits for another day's chance
+        r.app._auto_update_ytdlp()
+        time.sleep(0.3)
+        assert fake.version_now == "2024.01.01" and r.app.settings.get("ytdlp_auto_at") is None
+    finally:
+        r.stop()
+
+
+def test_a_failed_check_is_not_retried_every_few_minutes(tmp_path):
+    from rig import wait_for
+    r, fake = _auto_rig(tmp_path)
+    try:
+        def broken(url):
+            raise OSError("no route")
+        r.app.ytdlp_fetch_json = broken
+        r.app.enter_standby()
+        assert wait_for(lambda: r.app.settings.get("ytdlp_auto_at") is not None)
+        assert wait_for(lambda: not r.app._ytdlp_auto_running)
+        assert fake.version_now == "2024.01.01"
+    finally:
+        r.stop()
+
+
+def test_in_upload_mode_it_goes_through_the_page_and_shows_like_a_manual_update(tmp_path):
+    from rig import wait_for
+    r, fake = _auto_rig(tmp_path)
+    try:
+        r.app.ytdlp_auto_every = float("inf")                         # not on the way in ...
+        r.app.start_transfer()
+        assert wait_for(lambda: r.app.mode == "transfer" and r.app.youtube is not None)
+        r.app.youtube._fetch_json = lambda url: {"tag_name": "2025.02.02"}
+        r.app.ytdlp_auto_every = 0.0                                  # ... but now it is time
+        r.app._ytdlp_auto_running = False
+        r.app._auto_update_ytdlp()
+        assert wait_for(lambda: fake.version_now != "2024.01.01", timeout=5)
+        assert wait_for(lambda: r.app.youtube.ytdlp_info()["state"] == "done")      # the page's card says "Updated to ..."
+    finally:
+        r.stop()

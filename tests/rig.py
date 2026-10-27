@@ -55,6 +55,8 @@ class Rig:
         self.app.stream_notice_after = 0.3
         self.app.stream_notice_for = 1.0
         self.app.online_wait = 0.3
+        self.app.ytdlp_auto_every = float("inf")             # tests never go looking for a newer yt-dlp unless they ask to
+        self.app.net_wait_max, self.app.net_settle = 0.3, 0.0       # a streaming channel's wait for the network at start-up
         self.app.saved_wifi_wait = 0.5
         self.app.update_notice_seconds = 0.3
         self.app.net_check_every, self.app.net_down_grace, self.app.net_recover_every = 0.1, 0.4, 0.8

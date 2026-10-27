@@ -11,7 +11,7 @@ Nothing is converted. Your folders of videos work as they are.
 | What | Where it is on the old card | What to do |
 |---|---|---|
 | Videos | `~/videos/<channel>/` | Copy them off (see below). This is the slow part. |
-| TV name and boot greeting | `~/.config/tubeless/config.json` (`name`, `boot_greeting`) | Note the two values. |
+| TV name and wake-up message | `~/.config/tubeless/config.json` (`name`, `boot_greeting`) | Note the two values. |
 | Your own static clips | wherever `static_short` and `static_long` point (`python3 -m tubeless config show`) | Copy the two files off if you want to keep them. Tubeless ships a generated static if you don't. |
 | Touch calibration | `~/.local/share/tubeless/settings.json` | Leave it. The new card asks you to calibrate again, which takes a minute. |
 | Watch progress and shuffle order | `~/.local/share/tubeless/` | Leave it. Each channel starts fresh. |
@@ -55,7 +55,9 @@ Two things to expect when you connect:
 
 ## 3. Install Tubeless
 
-Put the new card in, power the TV on and SSH in. The screen stays dark until the installer has set up the display.
+Put the new card in, power the TV on and SSH in. The screen stays dark until the installer has set up the display, but the installer prints an
+address and a PIN: open it on a phone to watch progress and, meanwhile, set the TV's name, add YouTube support or not, and choose a "technical
+difficulties" picture (add `--no-page` to turn that off).
 
 ```
 curl -fsSL https://raw.githubusercontent.com/magicows/tubeless/main/get.sh | sudo sh -s -- --name "SimpTV" --with-youtube
@@ -76,7 +78,7 @@ sudo reboot
 After the reboot the screen shows the boot sequence, then touch calibration (tap the five targets; it only runs on a card with no videos
 yet, and a long press skips it), then the "No videos yet" screen. Calibration can be done again any time from Settings.
 
-Set the greeting back (run these from `~/tubeless`, where the installer put the code):
+Set the wake-up message back on the upload page's TV tab (Settings > Upload videos), or from a shell:
 
 ```
 cd ~/tubeless

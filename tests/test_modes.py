@@ -186,3 +186,60 @@ def test_the_greeting_is_saved_for_the_next_boot(tmp_path):
         assert "boot_greeting" not in json.loads(rig.app.config_path.read_text())
     finally:
         rig.stop()
+
+
+# ---- Jellyfin (the page's card) ------------------------------------------------------------------------------------------------
+def test_the_jellyfin_card_signs_in_browses_tests_and_signs_out(tmp_path):
+    import json as _json
+    from jf_fake import EP1, SERIES, FakeJellyfin
+    from tubeless import jellyfin
+    fake = FakeJellyfin()
+    rig = Rig(tmp_path)
+    try:
+        app = rig.app
+        assert app.jellyfin("status", {})["connected"] is False
+        with pytest.raises(ValueError):
+            app.jellyfin("libraries", {})                                              # not connected yet
+        with pytest.raises(ValueError) as e:
+            app.jellyfin("connect", {"server": fake.url, "username": "sam", "password": "wrong"})
+        assert "didn't accept that sign-in" in str(e.value) and not app.jf_credentials.signed_in
+        st = app.jellyfin("connect", {"server": fake.url, "username": "sam", "password": "hunter2"})
+        assert st["connected"] is True and st["user"] == "sam" and st["version"] == "12.4.0" and "hunter2" not in _json.dumps(st)
+        saved = (rig.cfg.data / "jellyfin.json").read_text()
+        assert fake.token in saved and "hunter2" not in saved
+        assert app.jellyfin("libraries", {})["libraries"][0]["name"] == "Shows"
+        assert [i["name"] for i in app.jellyfin("items", {"q": "simp"})["items"]] == ["The Simpsons"]
+        assert [e["id"] for e in app.jellyfin("episodes", {"id": SERIES})["episodes"]][0] == EP1
+        assert app.jellyfin("test", {"id": EP1})["ok"] is True
+        assert app.jellyfin("disconnect", {})["connected"] is False and not app.jf_credentials.signed_in
+        # Quick Connect
+        assert app.jellyfin("quick", {"server": fake.url})["code"] == "123456"
+        assert app.jellyfin("quick_poll", {})["state"] == "waiting" and app.jellyfin("status", {})["quick_code"] == "123456"
+        fake.approved = True
+        done = app.jellyfin("quick_poll", {})
+        assert done["state"] == "signed_in" and app.jf_credentials.signed_in and app.jellyfin("status", {})["quick_code"] == ""
+        with pytest.raises(ValueError):
+            app.jellyfin("quick_poll", {})                                              # nothing waiting any more
+        with pytest.raises(ValueError):
+            app.jellyfin("nonsense", {})
+    finally:
+        rig.stop()
+        fake.stop()
+
+
+def test_the_jellyfin_routes_need_the_pin_and_pass_messages_through(empty):
+    from jf_fake import FakeJellyfin
+    fake = FakeJellyfin()
+    try:
+        empty.tap(*button_centre("upload"))
+        assert wait_for(lambda: empty.state["mode"] == "transfer")
+        base, token = page(empty)
+        assert http(base, "GET", "/api/jf/status")[0] == 401
+        assert http(base, "POST", "/api/jf/connect", {"server": fake.url, "username": "sam", "password": "x"})[0] == 401
+        status, body = http(base, "POST", "/api/jf/connect", {"server": fake.url, "username": "sam", "password": "nope"}, token)
+        assert status == 400 and "didn't accept that sign-in" in body["error"]
+        assert http(base, "POST", "/api/jf/connect", {"server": fake.url, "username": "sam", "password": "hunter2"}, token)[1]["connected"] is True
+        assert http(base, "GET", "/api/jf/items?q=big", token=token)[1]["items"][0]["name"] == "Big Film"
+        assert http(base, "GET", "/api/jf/status", token=token)[1]["connected"] is True
+    finally:
+        fake.stop()

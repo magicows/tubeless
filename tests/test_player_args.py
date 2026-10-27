@@ -54,3 +54,25 @@ def test_streaming_asks_youtube_for_the_chosen_quality(tmp_path, monkeypatch):
     player.youtube_height = 240
     player.start(str(tmp_path / "p.m3u"))
     assert "height<=240" in [c for c in seen["cmd"] if c.startswith("--ytdl-format=")][0]
+
+
+def test_mpv_does_not_ask_yt_dlp_about_jellyfin_streams_and_names_itself(tmp_path, monkeypatch):
+    import os
+    seen = {}
+
+    class FakeProc:
+        pid = 1
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kw: (seen.setdefault("cmd", cmd), FakeProc())[1])
+    fake = tmp_path / "yt-dlp"
+    fake.write_text("#!/bin/sh\n")
+    os.chmod(fake, 0o755)
+    cfg = Config(data_dir=str(tmp_path / "data"), mpv_log=str(tmp_path / "mpv.log"), mpv_socket=str(tmp_path / "mpv.sock"), ytdlp_path=str(fake))
+    MpvPlayer(cfg, HW).start(str(tmp_path / "p.m3u"))
+    cmd = seen["cmd"]
+    opts = [c for c in cmd if c.startswith("--script-opts=")][0]
+    assert "ytdl_hook-exclude=/Videos/%x+/stream" in opts and f"ytdl_hook-ytdl_path={fake}" in opts
+    assert any(c.startswith("--user-agent=Tubeless/") for c in cmd)
