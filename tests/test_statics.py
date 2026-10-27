@@ -77,19 +77,18 @@ def test_the_default_is_todays_static_and_the_presets_swap_the_files(tmp_path):
     assert mgr.paths() == ("/builtin_short.mp4", "/builtin_long.mp4") and mgr.state()["choice"]["name"] == "sound"
     mgr.choose_preset("silent")
     assert [os.path.basename(p) for p in mgr.paths()] == ["static_short_silent.mp4", "static_long_silent.mp4"]
-    mgr.choose_preset("none")
-    assert [os.path.basename(p) for p in mgr.paths()] == ["static_blank.mp4"] * 2 and mgr.changes
     with pytest.raises(ValueError):
         mgr.choose_preset("loud")
-    for name in ("static_short_silent.mp4", "static_long_silent.mp4", "static_blank.mp4", "static_noise.m4a"):
+    for name in ("static_short_silent.mp4", "static_long_silent.mp4", "static_noise.m4a"):
         assert (ASSETS_DIR / name).is_file()
 
 
 def test_the_channel_change_hold_follows_the_clip_but_never_exceeds_the_usual(tmp_path):
     mgr = manager(tmp_path)
     assert mgr.delay(3.0) == 3.0
-    mgr.choose_preset("none")
-    assert mgr.delay(3.0) == 0.3                                            # a quick blank: no 3 second black screen
+    mgr.set_lengths(change=0.0)
+    assert mgr.delay(3.0) == 0.0 and not mgr.change_on()                    # off: the new channel just starts
+    mgr.set_lengths(change=3.0)
     clip = put(tmp_path / "data" / "static" / "clip" / "mine.mp4")
     mgr._select({"kind": "upload", "dir": "clip", "name": "mine.mp4"}, 1.5)
     assert mgr.delay(3.0) == 3.0                                            # your clip: held for the chosen change length (3 s by default)
@@ -315,7 +314,41 @@ def test_a_clip_shorter_than_the_time_asked_for_is_repeated(tmp_path):
     assert between.count(str(clip)) == 2 and change.count(str(clip)) == 4          # twice, and four times
     assert mgr.state()["lengths"]["applies"] is True
     mgr.choose_preset("sound")
-    assert mgr.state()["lengths"]["applies"] is False and mgr.paths() == ("/builtin_short.mp4", "/builtin_long.mp4")
+    mgr.set_lengths(between=0.6, change=3.0)
+    assert mgr.paths() == ("/builtin_short.mp4", "/builtin_long.mp4")              # the default lengths play the original clips themselves
+
+
+# ---- each static can be off, or any length, built-in or your own ------------------------------------------------------------
+def test_each_static_can_be_turned_off_on_its_own(tmp_path):
+    mgr = manager(tmp_path)
+    assert mgr.between_on() and mgr.change_on() and mgr.gap() == 0.6
+    mgr.set_lengths(between=0.0)
+    assert not mgr.between_on() and mgr.change_on() and mgr.gap() == 0.0 and mgr.lengths() == (0.0, 3.0)
+    mgr.set_lengths(between=1.0, change=0.0)
+    assert mgr.between_on() and not mgr.change_on() and mgr.lengths() == (1.0, 0.0)
+    assert 0.0 in statics.BETWEEN_OPTIONS and 0.0 in statics.CHANGE_OPTIONS and mgr.state()["lengths"]["between_options"][0] == 0.0
+    mgr.set_lengths(between=0.0, change=0.0)
+    assert mgr.paths()[0] and mgr.paths()[1]                                         # still valid entries, though neither is played
+
+
+def test_the_built_in_static_takes_the_chosen_lengths_too(tmp_path):
+    mgr = manager(tmp_path)
+    mgr.set_lengths(between=2.0, change=5.0)
+    between, change = mgr.paths()
+    assert between.startswith("edl://") and "/builtin_long.mp4,0,2" in between
+    assert change.startswith("edl://") and change.count("/builtin_long.mp4") == 2      # 5 s from a 3.1 s clip: it plays again for the rest
+    mgr.choose_preset("silent")
+    assert "static_long_silent.mp4,0,2" in mgr.paths()[0]
+    assert os.path.basename(str(mgr.current_file())) == "static_long_silent.mp4"        # the page's preview is the clip, not the playlist entry
+
+
+def test_the_old_no_static_choice_becomes_none_between_videos_and_the_usual_on_a_channel_change(tmp_path):
+    from tubeless.state import Settings, Store
+    settings = Settings(Store(tmp_path / "data"))
+    settings.set(static_choice={"kind": "preset", "name": "none"})
+    mgr = statics.StaticManager(Config(videos_dir=str(tmp_path / "v"), data_dir=str(tmp_path / "data"), static_short="/builtin_short.mp4",
+                                       static_long="/builtin_long.mp4"), settings, tmp_path / "v", ffmpeg="")
+    assert mgr.state()["choice"]["name"] == "sound" and mgr.lengths() == (0.0, 3.0) and not mgr.between_on() and mgr.change_on()
 
 
 def test_the_players_stand_in_understands_a_cut_clip_entry():

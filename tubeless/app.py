@@ -27,13 +27,14 @@ from .gestures import GestureRecognizer
 from . import health
 from .hardware import Hardware, apply_affine, solve_affine
 from . import jellyfin, live
+from .ads import EVERY_OPTIONS, AdsManager
 from .jfchannel import JellyfinChannelFile
 from .libindex import LibraryIndex
 from .lookahead import Lookahead
 from .library import STREAM_PREFIX, Library, Plan, Playlists
-from .menu import AUTO_DIM_STEPS, SLEEP_TIMER_STEPS, MenuContext, MenuModel, next_step
+from .menu import AUTO_DIM_STEPS, SLEEP_TIMER_STEPS, MenuContext, MenuModel, next_step, time_left
 from .pixels import image_to_565
-from .skip import skip_target
+from .skip import layout_target
 from .state import Settings, Store
 from .statics import StaticManager
 from . import __version__
@@ -71,6 +72,9 @@ class App:
         self.playlists = Playlists(self.library, self.store, cfg.short_static, rng=rng)
         self.statics = StaticManager(cfg, self.settings, self.library.root, on_change=self._static_changed)
         self.playlists.static_path = self.statics.paths()[0]
+        self.playlists.static_on = self.statics.between_on()
+        self.ads = AdsManager(cfg.ads, self.settings, rng=rng)             # opt in (see ads.py)
+        self.playlists.static_slot = self.ads.slot_entry
         self.rec = GestureRecognizer(cfg.long_press, cfg.touch_move_px, cfg.swipe_min_px)
         self.name = cfg.name
         self.tick_every = tick_every
@@ -89,6 +93,7 @@ class App:
         customs = self.settings.get("custom_themes", [])
         self.live_tv = bool(self.settings.get("live_tv", False))          # Live TV mode: opt in (see live.py)
         self.playlists.live = self._live_slot
+        self.guide_view = bool(self.settings.get("menu_guide", False))    # the menu opens on the TV guide (the header's guide button toggles it)
         listed = self.settings.get("channel_list", [])
         self.library.order = [n for n in listed if isinstance(n, str)] if isinstance(listed, list) else []
         seeds = self.settings.get("live_seeds", {})
@@ -143,6 +148,7 @@ class App:
         self.config_path = user_config_path()  # where the web page's rename is saved
         self.web: Optional[WebServer] = None
         self.uploads: Optional[UploadManager] = None
+        self.ad_uploads: Optional[UploadManager] = None
         self.web_info: Optional[dict] = None   # {"pin": ..., "urls": [...]} while upload mode is on
         self._stream: Optional[dict] = None    # the YouTube video that is loading / playing, if any
         self._stream_notice_until = 0.0
@@ -313,6 +319,7 @@ class App:
     def _static_changed(self) -> None:
         """A different TV static clip was chosen on the web page: the next playlist uses it (the player restarts on leaving upload mode)."""
         self.playlists.static_path = self.statics.paths()[0]
+        self.playlists.static_on = self.statics.between_on()
 
     def shuffle_for(self, channel) -> bool:
         """Does this channel play shuffled? A channel can be set to 'shuffle' or 'order' on the web page; otherwise the TV's Shuffle setting."""
@@ -450,11 +457,18 @@ class App:
         path = self.playlists.write_m3u(plan, self.m3u_path)
         self.player.start(path)
 
+    def _episode_at(self, pos) -> Optional[str]:
+        """The episode at a playlist position, or None on a static or an ad, and while a channel change's static is still showing (the new
+        channel's playlist is not loaded yet, so what the player reports is not a position in it)."""
+        if self._switch_timer is not None and self._switch_timer.is_alive():
+            return None
+        return self.playlists.episode_at(self.plan, pos)
+
     def save_progress_now(self) -> None:
         if self.plan is None or not self.player.alive():
             return
         pos = self.player.get("playlist-pos")
-        rel = self.playlists.episode_at(self.plan, pos)
+        rel = self._episode_at(pos)
         if rel is None or self._pending_resume:
             return
         t = self.player.get("time-pos") or 0.0
@@ -467,13 +481,16 @@ class App:
             self.save_progress_now()
 
     def skip_video(self, direction: int) -> None:
-        target = skip_target(self.player.get("playlist-pos"), self.player.get("playlist-count"), direction)
+        if self.plan is None or (self._switch_timer is not None and self._switch_timer.is_alive()):
+            return                                                  # nothing to skip: only the channel-change static is loaded
+        target = layout_target(self.playlists.layout(self.plan), self.player.get("playlist-pos"), direction)
         if target is None:
             return
         if target[0] == "end":
             self.finish_cycle()
             return
-        self.cmd("set_property", "playlist-pos", target[1])
+        where = target[1] + 1 if target[1] in self.playlists.ad_positions else target[1]       # a skip never plays an ad: straight to the video
+        self.cmd("set_property", "playlist-pos", where)
         self.cmd("set_property", "pause", False)
 
     def switch_channel(self, index: int, step: Optional[int] = None) -> None:
@@ -503,11 +520,15 @@ class App:
         self._cur_rel = None
         self._pending_resume = None
         self.playlists.write_m3u(plan, self.m3u_path)
-        self.cmd("loadfile", self.statics.paths()[1], "replace")
-        self.cmd("set_property", "pause", False)
         # A newer channel change replaces any pending one, so rapid swipes don't pile up.
         if self._switch_timer is not None:
             self._switch_timer.cancel()
+            self._switch_timer = None
+        if not self.statics.change_on():
+            self._finish_switch(plan)                                # no static on a channel change: the new channel just starts
+            return
+        self.cmd("loadfile", self.statics.paths()[1], "replace")
+        self.cmd("set_property", "pause", False)
         self._switch_timer = threading.Timer(self.statics.delay(self.switch_delay), self._finish_switch, args=(plan,))
         self._switch_timer.daemon = True
         self._switch_timer.start()
@@ -614,6 +635,8 @@ class App:
     def open_menu(self) -> None:
         self._set_menu_open(True)
         self.menu.reset()
+        if self.guide_view:
+            self._show_guide()
         self.confirm_shutdown_until = self.confirm_transfer_until = 0.0
         self.schedule_menu_hide()
         log.info("menu opened")
@@ -629,10 +652,50 @@ class App:
         self._clear_overlay()
         log.info("menu closed")
 
+    def _show_guide(self) -> None:
+        """Open the guide page with the channel you are on in view."""
+        self.menu.open_page("guide")
+        self.menu.index = max(0, self.channel_index)
+        self.menu.top = render.clamp_top(self.menu.index - render.VISIBLE_ROWS // 2, len(self.channels()))
+
+    def toggle_guide(self) -> None:
+        """The header's guide button: the guide page, or back to the usual menu; the choice is remembered for next time."""
+        if self.menu.page == "guide":
+            self.menu.open_page("main")
+        else:
+            self._show_guide()
+        self.guide_view = self.menu.page == "guide"
+        self.settings.set(menu_guide=self.guide_view)
+        self.confirm_shutdown_until = self.confirm_transfer_until = 0.0
+        self.schedule_menu_hide()
+        self.render_menu()
+
+    def _now_on(self, channel) -> str:
+        """The guide's line for a channel: what is on it now (Live TV mode) or would play next, and how long is left of it."""
+        rels = self.library.videos(channel)
+        if not rels:
+            return "No videos"
+        streams = self.library.stream_seconds(channel) if any(self.library.is_stream(r) for r in rels) else {}
+        found = self._live_channel(channel, rels) if self.live_tv else None
+        if found is not None:
+            order, durations = found
+            rel, seconds_in = live.slot(order, durations, time.time(), self.statics.gap())
+            prefix = "On now"
+        else:
+            saved = self.playlists.progress(channel)
+            rel, seconds_in = (saved.get("current"), float(saved.get("pos") or 0)) if saved.get("current") in rels else (None, 0.0)
+            if rel is None:
+                return f"{len(rels)} video{'' if len(rels) == 1 else 's'}"
+            prefix = "Next"
+        length = self._seconds_of(channel, rel, streams)
+        left = time_left(length - seconds_in if length else None)
+        return f"{prefix}: {self.library.title_of(channel, rel)}" + (f"  ·  {left}" if left else "")
+
     def _menu_ctx(self) -> MenuContext:
         channels = self.channels()
         shuffling = self.shuffle_for(channels[self.channel_index]) if 0 <= self.channel_index < len(channels) else self.shuffle
-        return MenuContext(
+        return MenuContext(guide=[self._now_on(c) for c in channels] if self.menu.page == "guide" else (),
+
             paused=bool(self.player.get("pause")), brightness=self.current_brightness(), shuffle=shuffling,
             channels=[c.label for c in channels], current_channel=self.channel_index,
             sleep_timer_min=self.sleep_timer_min, auto_dim_min=self.auto_dim_min,
@@ -650,8 +713,11 @@ class App:
         now = time.time()
         armed = tuple(n for n, until in (("power", self.confirm_shutdown_until), ("upload", self.confirm_transfer_until)) if now < until)
         footer = {"power": "TAP THE POWER BUTTON AGAIN TO SHUT DOWN", "upload": "TAP THE UPLOAD BUTTON AGAIN FOR UPLOAD AND SETTINGS"}[armed[-1]] if armed else None
+        if not footer and self.menu.page == "guide":
+            footer = "TAP  tune in        SWIPE  scroll        HOLD  close"
         image = render.render_menu_landscape(items, self.menu.index, self.hw, title=self.name, subtitle=subtitle,
-                                             top=self.menu.top, armed=armed, **({"footer": footer} if footer else {}))
+                                             top=self.menu.top, armed=armed, lit=("guide",) if self.menu.page == "guide" else (),
+                                             **({"footer": footer} if footer else {}))
         self._set_overlay(image)
 
     def menu_select(self) -> None:
@@ -892,6 +958,9 @@ class App:
             self.close_menu()
         elif kind == "tap":
             button = render.header_hit(g[1], g[2], self.hw)
+            if button == "guide":
+                self.toggle_guide()
+                return
             if button == "power":
                 self.request_shutdown()
                 return
@@ -1015,7 +1084,8 @@ class App:
                     # The player knows whether the playlist played through (exit status 0); fall back to where we last saw it.
                     # A player that died within seconds of starting did not play anything through, whatever it says.
                     finished = self._fast_restarts == 0 and (bool(getattr(self.player, "finished_normally", lambda: False)()) or (
-                        pos is not None and count is not None and pos >= count - 2))
+                        pos is not None and count is not None and self.plan is not None
+                        and pos >= count - (2 if self.playlists.layout(self.plan)[-2:-1] == [None] else 1)))     # the last video, or the static before it
                     log.info("player is not running (%s) - restarting", "playlist finished" if finished else "crashed")
                     if self._fast_restarts >= 3:
                         log.warning("the player keeps stopping straight after it starts; waiting %.0f s between restarts "
@@ -1062,8 +1132,8 @@ class App:
         if (self.mode != "play" or self.plan is None or self.menu_open
                 or not getattr(self.player, "supports_lookahead", False)):
             return
-        idx = pos + 2                                           # the next video (a static clip sits between)
-        nxt = self.playlists.episode_at(self.plan, idx)
+        idx = self.playlists.next_video_pos(self.plan, pos)     # the next video (a static clip or an ad may sit between)
+        nxt = self.playlists.episode_at(self.plan, idx) if idx is not None else None
         if nxt is None or not self.library.is_youtube(nxt):          # looking ahead is for YouTube (a Jellyfin video starts in seconds anyway)
             return
         vid = nxt[len(STREAM_PREFIX):]
@@ -1181,7 +1251,7 @@ class App:
         if pos is None:
             return
         self._last_pos = (pos, count)
-        rel = self.playlists.episode_at(self.plan, pos)
+        rel = self._episode_at(pos)
         if self._watch_stream(rel):
             return                                              # the player was restarted: what we just read is out of date
         if rel is not None and self.lookahead_enabled:
@@ -1248,6 +1318,7 @@ class App:
             pass
         self._show_busy("UPLOAD MODE", ["Starting the upload page..."])      # stopping mpv uncovers whatever was drawn last
         self.uploads = UploadManager(self.library.root)
+        self.ad_uploads = UploadManager(self.cfg.ads.parent)             # the ads folder is a "channel" of its own parent
         session = Session()
         ytdlp = self._ytdlp or YtDlp(find_ytdlp(self.cfg.ytdlp_path))
         if hasattr(ytdlp, "height"):
@@ -1255,7 +1326,7 @@ class App:
         self.youtube = YouTubeManager(self.library.root, ytdlp,
                                       on_change=self._mark_screen_dirty)
         server = WebServer(self.uploads, session, _WebHooks(self), host="0.0.0.0", port=self.cfg.web_port,
-                           youtube=self.youtube)
+                           youtube=self.youtube, ad_uploads=self.ad_uploads)
         try:
             port = server.start()
         except OSError as e:
@@ -1677,7 +1748,7 @@ class App:
         if found is None:
             return None
         order, durations = found
-        on_air = live.slot(order, durations, time.time(), self.statics.lengths()[0])
+        on_air = live.slot(order, durations, time.time(), self.statics.gap())
         return (order, on_air[0], on_air[1]) if on_air else None
 
     def reshuffle_live(self, channel_name: str) -> None:
@@ -1709,7 +1780,7 @@ class App:
             missing = sum(1 for r in rels if not (self._seconds_of(c, r, streams) or 0) > 0)
             found = None if missing or not rels else self._live_channel(c, rels)
             channels.append({"name": c.name, "label": c.label, "ready": found is not None, "missing": missing,
-                             "minutes": live.minutes(live.total_seconds(found[1], self.statics.lengths()[0])) if found else None})
+                             "minutes": live.minutes(live.total_seconds(found[1], self.statics.gap())) if found else None})
         return {"channels": channels}
 
     # --- Jellyfin (see jellyfin.py; the page's Jellyfin card) ---------------------------------------------------------
@@ -1905,6 +1976,7 @@ class App:
             channels.append(entry)
         return {"name": self.name, "greeting": self.cfg.boot_greeting, "channels": channels, "standby_custom": self.cfg.standby_custom.is_file(),
                 "scan": self.index.status(), "settings": self.web_settings(), "static": self.statics.state(),
+                "ads": dict(self.ads.state(), channel=self.cfg.ads.name),
                 "themes": self.theme_list(), "theme": self.theme_id,
                 "theme_css": self.theme_css(), "theme_style": self.theme_style()}
 
@@ -1913,7 +1985,7 @@ class App:
         return {"values": {"brightness": self.brightness, "shuffle": self.shuffle, "auto_dim_min": self.auto_dim_min,
                            "sleep_timer_min": self.sleep_timer_min, "youtube_height": self.youtube_height,
                            "youtube_lookahead": self.lookahead_enabled, "theme": self.theme_id,
-                           "live_tv": self.live_tv, "ytdlp_auto": bool(self.settings.get("ytdlp_auto", True)),
+                           "live_tv": self.live_tv, "ads": self.ads.enabled, "ads_every": self.ads.every, "ytdlp_auto": bool(self.settings.get("ytdlp_auto", True)),
                            "night_mode": self.night.enabled, "night_brightness": self.night.level, "night_schedule": self.night.mode,
                            "night_location": ("%s, %s" % self.night.location) if self.night.location else "",
                            "night_from": daynight.format_clock(self.night.start), "night_to": daynight.format_clock(self.night.end)},
@@ -1922,7 +1994,7 @@ class App:
                 "options": {"brightness": list(self.hw.brightness_levels), "auto_dim_min": list(AUTO_DIM_STEPS),
                             "sleep_timer_min": list(SLEEP_TIMER_STEPS), "youtube_height": list(HEIGHTS),
                             "theme": list(themes.all_themes(self.custom_themes)), "night_brightness": list(self.hw.brightness_levels),
-                            "night_schedule": list(daynight.MODES)}}
+                            "night_schedule": list(daynight.MODES), "ads_every": list(EVERY_OPTIONS)}}
 
     def set_channel_list(self, names: list) -> None:
         """The channels' numbers, set by dragging them into order on the web page: `names` is every channel, first is channel 1."""
@@ -1971,6 +2043,10 @@ class App:
             self.live_tv = value
             self.settings.set(live_tv=value)
             log.info("Live TV mode %s from the web page", "on" if value else "off")
+        elif key == "ads":
+            self.ads.set_enabled(value)                                       # the playlist built next has them (or not)
+        elif key == "ads_every":
+            self.ads.set_every(value)
         elif key in ("night_mode", "night_location", "night_from", "night_to"):
             if key == "night_mode":
                 if not isinstance(value, bool):
@@ -2075,6 +2151,13 @@ class App:
         self.index.start_scan(force)
         return self.index.status()
 
+    def ads_download(self, url: str) -> None:
+        """Download a YouTube video into the ads folder (from the web page): raises ValueError("why not")."""
+        ytdlp = self._ytdlp or YtDlp(find_ytdlp(self.cfg.ytdlp_path))
+        if hasattr(ytdlp, "height"):
+            ytdlp.height = self.youtube_height
+        self.ads.start_download(ytdlp, url)
+
     def on_uploaded(self, info: dict) -> None:
         log.info("uploaded %s/%s", info.get("channel"), info.get("file"))
         self.index.start_scan()
@@ -2131,6 +2214,14 @@ class _WebHooks:
 
     def set_channel_order(self, channel: str, order: str) -> None:
         self.app.set_channel_order(channel, order)
+
+    # the ads between videos (see ads.py)
+    @property
+    def ads(self):
+        return self.app.ads
+
+    def ads_download(self, url: str) -> None:
+        self.app.ads_download(url)
 
     def set_channel_list(self, names: list) -> None:
         self.app.set_channel_list(names)

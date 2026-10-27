@@ -2,7 +2,9 @@
 Channels (folders of videos), and the playlist for each one.
 
 Playlist layout is  static, video, static, video, ...  so every video has a static
-burst in front of it.
+burst in front of it. With the static switched off it is  video, video, ...  (a clean cut), and an ad, where one
+is due, is the only thing between two videos. `Playlists.layout` says which is which, for skipping and for knowing
+what is playing.
 
 Shuffling is "non-repeating": a channel's shuffled order is saved, and you work
 through it in order. It is only reshuffled when you have been through all of it
@@ -202,6 +204,11 @@ class Playlists:
         self.static_path = static_path
         self.rng = rng or random.Random()
         self.live: Optional[Callable[[Channel], Optional[Tuple[List[str], str, float]]]] = None     # Live TV mode (see live.py), set by the app
+        self.static_slot: Optional[Callable[[str, int], str]] = None     # the entry in front of the video at an index, ads in it (see ads.py), set by the app
+        self.ad_positions: set = set()                                    # playlist positions in the last playlist written that have an ad
+        self.static_on = True                                             # a static clip in front of every video; off: videos follow each other (an ad, if due, is the only break)
+        self._layout: List[Optional[int]] = []                            # what the last playlist written holds: an episode's index in the plan, or None for a static or an ad
+        self._layout_plan: Optional[Plan] = None
 
     def _live_plan(self, channel: Channel, shuffle: bool) -> Optional[Plan]:
         """With Live TV mode on and every length known: the plan that is on air now (its running order, the video and the position in it)."""
@@ -293,12 +300,35 @@ class Playlists:
 
     # --- what mpv plays ----------------------------------------------------------
     def entries(self, plan: Plan) -> List[str]:
-        """static, video, static, video ... starting at the current episode."""
+        """static, video, static, video ... starting at the current episode (some statics have an ad after them). With the static off it is
+        video, video, ...: a clean cut from one to the next, except where an ad is due, and then the ad alone sits between them."""
         out: List[str] = []
-        for rel in plan.rotated:
-            out.append(self.static_path)
+        layout: List[Optional[int]] = []
+        self.ad_positions = set()
+        base = self.static_path if self.static_on else None
+        for i, rel in enumerate(plan.rotated):
+            entry = self.static_slot(base, i) if self.static_slot is not None else base
+            if entry is not None:
+                if entry != base:
+                    self.ad_positions.add(len(out))
+                out.append(entry)
+                layout.append(None)
             out.append(self.library.abspath(plan.channel, rel))
+            layout.append(i)
+        self._layout, self._layout_plan = layout, plan
         return out
+
+    def layout(self, plan: Plan) -> List[Optional[int]]:
+        """For each playlist position: the episode's index in `plan.rotated`, or None for a static or an ad. It is what was last written
+        for this plan; before that, what the plan would be without ads."""
+        if self._layout_plan is plan:
+            return self._layout
+        return [x for i in range(len(plan.rotated)) for x in ((None, i) if self.static_on else (i,))]
+
+    def next_video_pos(self, plan: Plan, playlist_pos: int) -> Optional[int]:
+        """The playlist position of the first video after `playlist_pos` (None if there is none)."""
+        layout = self.layout(plan)
+        return next((j for j in range(playlist_pos + 1, len(layout)) if layout[j] is not None), None)
 
     def write_m3u(self, plan: Plan, path) -> str:
         path = str(path)
@@ -309,9 +339,8 @@ class Playlists:
         return path
 
     def episode_at(self, plan: Plan, playlist_pos: int) -> Optional[str]:
-        """Relative path of the episode at an mpv playlist position (None for a static)."""
-        if playlist_pos is None or playlist_pos % 2 == 0:
+        """Relative path of the episode at an mpv playlist position (None for a static or an ad)."""
+        layout = self.layout(plan)
+        if playlist_pos is None or not 0 <= playlist_pos < len(layout) or layout[playlist_pos] is None:
             return None
-        rotated = plan.rotated
-        i = (playlist_pos - 1) // 2
-        return rotated[i] if 0 <= i < len(rotated) else None
+        return plan.rotated[layout[playlist_pos]]

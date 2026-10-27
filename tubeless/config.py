@@ -34,6 +34,7 @@ class Config:
 
     # Where things live.
     videos_dir: str = "~/videos"
+    ads_dir: str = "~/ads"                 # the clips that can play between videos, if ads are switched on (see ads.py)
     data_dir: str = "~/.local/share/tubeless"
     log_file: str = "~/.local/share/tubeless/tubeless.log"
     mpv_log: str = "~/.local/share/tubeless/mpv.log"
@@ -73,6 +74,10 @@ class Config:
     @property
     def videos(self) -> Path:
         return expand(self.videos_dir)
+
+    @property
+    def ads(self) -> Path:
+        return expand(self.ads_dir)
 
     @property
     def data(self) -> Path:

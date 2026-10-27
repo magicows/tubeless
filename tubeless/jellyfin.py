@@ -30,6 +30,7 @@ TICKS = 10_000_000                      # Jellyfin counts time in ticks of 100 n
 CLIENT, DEVICE = "Tubeless", "Tubeless TV"
 USER_AGENT = f"Tubeless/{__version__} (a Raspberry Pi TV; Jellyfin client)"       # Python's own default is refused by Cloudflare and some proxies
 KINDS = ("Series", "Movie", "BoxSet", "Playlist")
+PROBE_BYTES = 2 * 1024 * 1024           # the stream test stops listening after this much: that is already many seconds of video
 ID_RE = re.compile(r"^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
@@ -73,6 +74,37 @@ def normalise_server(text: str) -> str:
 def mask(url: str) -> str:
     """A stream address with the token hidden, for the log."""
     return re.sub(r"(api_key=)[^&]+", r"\1***", url, flags=re.I)
+
+
+def diagnose(got: int, window: float, wanted_bps: float, ended: str, network_bps: Optional[float]) -> dict:
+    """Why a stream might buffer, from a timed listen to it: `got` bytes over `window` seconds against the `wanted_bps` it needs to keep up
+    with playing, and (if the server would say) `network_bps`, how fast it sends plain bytes. `ended` is why listening stopped: "time", "plenty"
+    (it was far faster than needed) or "eof". Returns {verdict, advice, kbps, wanted_kbps, realtime, network_mbps}; the verdict is
+    fine | marginal | server | network | slow (it is slow but the cause is unclear) | unknown."""
+    out = {"wanted_kbps": round(wanted_bps / 1000), "kbps": None, "realtime": None,
+           "network_mbps": round(network_bps / 1e6, 1) if network_bps else None}
+    if ended == "plenty":
+        return dict(out, verdict="fine", advice="The stream arrives much faster than it plays, so it should not buffer.")
+    if window < 0.5 or (ended == "eof" and got < 64 * 1024):
+        return dict(out, verdict="unknown", advice="The stream ended too soon to tell whether it keeps up.")
+    rate = got * 8 / window
+    realtime = rate / wanted_bps
+    out.update(kbps=round(rate / 1000), realtime=round(realtime, 2))
+    speed = f"The stream arrives at {out['kbps']} kbit/s and plays at {out['wanted_kbps']} kbit/s ({realtime:.1f}x)."
+    if realtime >= 1.3:
+        return dict(out, verdict="fine", advice=f"{speed} It keeps up, so it should not buffer.")
+    if realtime >= 1.0:
+        return dict(out, verdict="marginal", advice=f"{speed} It only just keeps up, so it may buffer now and then.")
+    if network_bps and network_bps >= 4 * wanted_bps:
+        return dict(out, verdict="server", advice=f"{speed} The connection to the server is fast ({out['network_mbps']} Mbit/s), so the server is not "
+                    "producing the picture fast enough: its transcoding is the limit. A large or HEVC / 10-bit video on a small machine does this. "
+                    "Convert the video once to a smaller 8-bit H.264 MP4, or give the server more power.")
+    if network_bps and network_bps < 2 * wanted_bps:
+        return dict(out, verdict="network", advice=f"{speed} The connection to the server is slow ({out['network_mbps']} Mbit/s): check the "
+                    "TV's Wi-Fi signal, or use the server's home-network address instead of a proxy.")
+    return dict(out, verdict="slow", advice=f"{speed} That is too slow, so it buffers. "
+                + ("I couldn't time the plain connection to say whether the server or the network is the limit." if not network_bps
+                   else f"The plain connection ran at {out['network_mbps']} Mbit/s, so the server's transcoding and the network may both be part of it."))
 
 
 # ─────────────────────────────────────────────
@@ -281,15 +313,17 @@ class Client:
 
     # --- playing --------------------------------------------------------------------------------------------------------
     STREAM_VARIANTS = (("the usual options", 0), ("fewer options (no forced H.264 profile or audio limits)", 1), ("a Matroska container instead of MP4", 2))
+    VIDEO_BITRATES = {240: 500_000, 360: 900_000, 480: 1_400_000}      # bits per second asked of the server, by picture height
+    AUDIO_BITRATE = 96_000
 
     def stream_url(self, item_id: str, height: int = 360, start_seconds: float = 0.0, variant: int = 0) -> str:
         """A progressive H.264 + AAC stream of one video, at most `height` lines tall, transcoded by the server if need be.
         The token rides in the address (`api_key`) because the player can't send a header for one playlist entry."""
         if not valid_item_id(item_id):
             raise JellyfinError("That isn't a video.")
-        bitrate = {240: 500_000, 360: 900_000, 480: 1_400_000}.get(height, 900_000)
+        bitrate = self.VIDEO_BITRATES.get(height, 900_000)
         query = {"static": False, "videoCodec": "h264", "audioCodec": "aac", "maxHeight": height, "videoBitRate": bitrate,
-                 "audioBitRate": 96_000, "maxAudioChannels": 2, "requireAvc": True, "deviceId": self.device_id, "api_key": self.token}
+                 "audioBitRate": self.AUDIO_BITRATE, "maxAudioChannels": 2, "requireAvc": True, "deviceId": self.device_id, "api_key": self.token}
         if variant >= 1:                                         # gentler requests, for a video the server's transcoder fails on
             for key in ("requireAvc", "audioBitRate", "maxAudioChannels"):
                 query.pop(key)
@@ -297,9 +331,11 @@ class Client:
             query["startTimeTicks"] = int(start_seconds * TICKS)
         return self._url(f"/Videos/{item_id}/stream.{'mkv' if variant >= 2 else 'mp4'}", query)
 
-    def check_stream(self, item_id: str, height: int = 360, seconds: float = 6.0) -> dict:
+    def check_stream(self, item_id: str, height: int = 360, seconds: float = 10.0) -> dict:
         """Ask for the start of the stream and say what came back: for the page's test button. If the server's transcoder fails (a 5xx), try
-        gentler requests and say which one works, so it is clear whether the video or the request is the problem."""
+        gentler requests and say which one works, so it is clear whether the video or the request is the problem. It also listens for
+        `seconds` to see whether the stream arrives faster than it plays (if not, the picture buffers), and times the plain connection to the
+        server to tell a slow transcode from a slow network (see `diagnose`)."""
         failed = []
         for name, variant in self.STREAM_VARIANTS:
             try:
@@ -308,6 +344,8 @@ class Client:
                 failed.append(e.code)
                 continue
             result["variant"] = name
+            wanted = self.VIDEO_BITRATES.get(height, 900_000) + self.AUDIO_BITRATE
+            result.update(diagnose(result["bytes"], result.pop("window_seconds"), wanted, result.pop("ended"), self._network_bps()))
             if failed:
                 result["note"] = (f"The server failed ({failed[0]}) with {self.STREAM_VARIANTS[0][0]} but worked with {name}. "
                                   "So it is how the TV asks, not the video: tell the author which video it was.")
@@ -316,16 +354,36 @@ class Client:
                             "Look in Jellyfin's dashboard under Logs for the FFmpeg transcode log of this video (a damaged file, an unusual "
                             "audio or subtitle track, or hardware transcoding that doesn't cope are the usual causes).", 502)
 
+    def _network_bps(self, size: int = 1_000_000, limit: float = 5.0) -> Optional[float]:
+        """How fast the server sends plain bytes (Jellyfin's own bitrate test, no transcoding), in bits per second; None if it won't say."""
+        req = urllib.request.Request(self._url("/Playback/BitrateTest", {"size": size, "api_key": self.token}), headers={"User-Agent": USER_AGENT})
+        started, got = time.time(), 0
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                while time.time() - started < limit:
+                    chunk = resp.read(16 * 1024)
+                    if not chunk:
+                        break
+                    got += len(chunk)
+        except (urllib.error.URLError, OSError):
+            return None
+        elapsed = time.time() - started
+        return got * 8 / elapsed if got >= size // 2 and elapsed > 0 else None
+
     def _probe(self, url: str, seconds: float) -> dict:
         req = urllib.request.Request(url, headers={"Range": "bytes=0-", "User-Agent": USER_AGENT})
-        started, got = time.time(), 0
+        started, got, ended = time.time(), 0, "time"
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 status, kind = resp.status, resp.headers.get("Content-Type", "")
                 first = None
-                while time.time() - started < seconds and got < 512 * 1024:
+                while time.time() - (started if first is None else started + first) < seconds:      # listen `seconds` from the first data
+                    if got >= PROBE_BYTES:
+                        ended = "plenty"                        # it arrived far faster than it plays
+                        break
                     chunk = resp.read(16 * 1024)
                     if not chunk:
+                        ended = "eof"
                         break
                     if first is None:
                         first = time.time() - started
@@ -336,5 +394,7 @@ class Client:
             raise JellyfinError(f"The server refused the stream ({e.code})." + (" The token in the address wasn't accepted." if e.code == 401 else ""), 502)
         except (urllib.error.URLError, OSError) as e:
             raise JellyfinError(f"Couldn't read the stream: {getattr(e, 'reason', e)}", 502)
+        elapsed = time.time() - started
         return {"status": status, "content_type": kind, "bytes": got, "first_byte_seconds": round(first, 1) if first is not None else None,
-                "seconds": round(time.time() - started, 1), "ok": got > 0 and ("video" in kind or "octet" in kind or "mp4" in kind)}
+                "seconds": round(elapsed, 1), "window_seconds": elapsed - (first or 0.0), "ended": ended,
+                "ok": got > 0 and ("video" in kind or "octet" in kind or "mp4" in kind)}

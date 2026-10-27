@@ -2,9 +2,10 @@
 The menu as data: what rows exist on each page, and what selecting one means.
 Pure logic; drawing is in render.py and doing is in app.py.
 
-    (Both pages also show two icon buttons in the header, shut down and upload mode, each needing two taps; see app.py.)
+    (Every page also shows icon buttons in the header: the guide, shut down and upload mode, the last two needing two taps; see app.py.)
     main:      Pause/Play, Next video, Previous video, Brightness, Settings >, then the channels
     settings:  < Back, Shuffle, Reshuffle channel, Sleep timer, Auto-dim, Calibrate touch, Upload videos, Wi-Fi setup, Shut down
+    guide:     every channel: its number and name, and what is on it now (or next) with the time left; tap one to tune to it
 """
 from __future__ import annotations
 
@@ -22,6 +23,8 @@ class Item:
     action: Tuple = ()
     value: Optional[str] = None
     current: bool = False
+    number: Optional[int] = None      # drawn in place of the icon (the guide's channel numbers)
+    detail: str = ""                  # a smaller line under the label (the guide's "what is on")
 
 
 @dataclass
@@ -36,6 +39,7 @@ class MenuContext:
     confirm_shutdown: bool = False
     confirm_transfer: bool = False            # the header's upload button has had its first tap
     wifi_setup: bool = False                  # offered only where the OS can do it (NetworkManager)
+    guide: Sequence[str] = ()                 # what is on each channel, as the guide shows it (same order as `channels`)
 
 
 def _minutes(m: int) -> str:
@@ -69,6 +73,10 @@ class MenuModel:
                 rows.append(Item("wifi", "Wi-Fi setup", ("wifi_setup",)))
             rows.append(Item("power", "Tap again to confirm" if ctx.confirm_shutdown else "Shut down", ("shutdown",)))
             return rows
+        if self.page == "guide":
+            return [Item("tv", label, ("channel", i), current=(i == ctx.current_channel), number=i + 1,
+                         detail=ctx.guide[i] if i < len(ctx.guide) else "")
+                    for i, label in enumerate(ctx.channels)]
         rows = [
             Item("play" if ctx.paused else "pause", "Play" if ctx.paused else "Pause", ("playpause",)),
             Item("next", "Next video", ("next",)),
@@ -79,6 +87,13 @@ class MenuModel:
         for i, label in enumerate(ctx.channels):
             rows.append(Item("tv", label, ("channel", i), current=(i == ctx.current_channel)))
         return rows
+
+
+def time_left(seconds: Optional[float]) -> str:
+    """'12 min left', as the guide says it ('' when the length is not known)."""
+    if seconds is None or seconds <= 0:
+        return ""
+    return "under a minute left" if seconds < 60 else f"{int(round(seconds / 60.0))} min left"
 
 
 def next_step(steps: Sequence[int], value: int) -> int:

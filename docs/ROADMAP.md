@@ -25,26 +25,18 @@ mode, dimming, the installer and updater. This file is only what is **still to d
 
 ## Planned
 
-### Ads between videos
+### Ads follow-ups
 
-Opt-in stingers: between videos on any channel, play a random clip from an ads folder, every 1, 2, 3 ... videos (the user chooses how many).
+* **Try the ads on the TV.** An ad is joined to the static as one `edl://` entry (`ads.splice`), which mpv on the Pi must play across clips of
+  different size and codec without a stall or a glitch. Only the simulator and tests have run it. If it doesn't join cleanly, change `splice`,
+  or make the ad a third kind of entry in the playlist (a no-static layout was tried for streams and reverted).
+* In Live TV mode an ad pushes the next video back by its length, so the channel runs late until you next tune in (the schedule is worked out
+  from the clock without the ads, so tuning in is always true). Cutting the start of the next video by the ad's length would hold the clock.
 
-* A switch and a frequency in Settings on the web page, off by default. The folder is `~/ads`.
-* Switched on with an empty folder, the page says plainly that it does nothing until the folder is filled.
-* Filling it: upload clips to it from the upload page (an "Ads" target), or download them from YouTube. A YouTube clip can't be streamed as an
-  ad, so the stream option isn't offered there.
-* Not played when you change channel (that is the static's job), nor on a swipe to skip.
-* How: put the ad in the *static slot* of the playlist, as one `edl://` entry made of the static clip then the ad, so the static/video alternation
-  that skipping and episode detection rely on doesn't change. To try on the TV: mpv must join clips of different size and codec cleanly. The
-  alternative is a third entry kind in the playlist with the layout logic taught about it (a no-static layout was tried for streams and reverted).
-* With Live TV mode on, ads are not part of the schedule (they fill the gap between videos), so the clock stays true.
+### TV guide follow-ups
 
-### TV guide view
-
-A third icon in the menu's header, next to upload and power, toggles the menu between the settings view and a TV guide, and remembers the choice.
-The guide is a mini listing of every channel: number, name, and what is on it now (title and time left); tapping a row tunes to it. With Live TV
-mode on it is what is on air now (the schedule gives it by arithmetic); otherwise what each channel would play next (where it left off). Needs a
-per-channel "now on" lookup (the live slot, or saved progress), a list view in `render.py` like the menu's with a number column, and a stored setting.
+* What is on *next* on each channel in Live TV mode (the schedule gives it by arithmetic), and a clock in the guide's header.
+* The guide has no way into Settings (toggle back to the menu first); a small gear row at the end of it would do.
 
 ### Jellyfin follow-ups
 
@@ -56,7 +48,7 @@ per-channel "now on" lookup (the live slot, or saved progress), a list view in `
 
 ### Live TV mode follow-ups
 
-* A per-channel switch (it is one global switch today), and the guide above as its "now on" listing.
+* A per-channel switch (it is one global switch today), and the TV guide as its "now on" listing (it already is, for the channels that can be scheduled).
 
 ### Themes follow-ups
 

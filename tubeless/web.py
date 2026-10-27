@@ -240,6 +240,8 @@ class WebServer:
         set_channel_list(names)               the channels' numbers: every channel's folder name, first is channel 1; raises ValueError("why not")
         reshuffle_live(channel)               a new running order in Live TV mode; raises ValueError("why not")
         set_channel_order(channel, order)     'shuffle' | 'order' | 'default'; raises ValueError("why not")
+        ads                                   an ads.AdsManager (the ads between videos and their folder; raises ValueError("why not"))
+        ads_download(url)                     start downloading a YouTube video into the ads folder; raises ValueError("why not")
         statics                               a statics.StaticManager (the TV static clip and its files; raises ValueError("why not"))
         status() -> dict                      uptime, temperature, memory ...
         logs(lines: int) -> str               the end of the app's log
@@ -248,8 +250,9 @@ class WebServer:
     """
 
     def __init__(self, manager: UploadManager, session: Session, hooks, host: str = "0.0.0.0", port: int = 8080,
-                 youtube=None):
+                 youtube=None, ad_uploads=None):
         self.manager, self.session, self.hooks = manager, session, hooks
+        self.ad_uploads = ad_uploads                                # an UploadManager whose one "channel" is the ads folder, or None
         self.youtube = youtube                                      # a youtube.YouTubeManager, or None
         self.host, self.port = host, port
         self.httpd: Optional[ThreadingHTTPServer] = None
@@ -324,6 +327,10 @@ class WebServer:
                 except Exception:
                     log.exception("YouTube request failed")
                     self._fail(500, "The TV had a problem with that.")
+
+            def _uploads(self, q: Dict[str, str]):
+                """The manager an upload request is for: the ads folder's if it says target=ads, else the channels'."""
+                return server.ad_uploads if q.get("target") == "ads" and server.ad_uploads is not None else server.manager
 
             def _query(self) -> Dict[str, str]:
                 return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
@@ -409,7 +416,7 @@ class WebServer:
                     if self._authed():
                         q = self._query()
                         try:
-                            self._json(200, {"received": server.manager.received(q.get("channel", ""), q.get("name", ""))})
+                            self._json(200, {"received": self._uploads(q).received(q.get("channel", ""), q.get("name", ""))})
                         except UploadError as e:
                             self._fail(e.status, e.message)
                 else:
@@ -487,6 +494,22 @@ class WebServer:
                     except ValueError as e:
                         return self._fail(400, str(e))
                     self._json(200, {"ok": True})
+                elif route in ("/api/ads/youtube", "/api/ads/delete", "/api/ads/cancel"):
+                    if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    try:
+                        if route.endswith("/youtube"):
+                            server.hooks.ads_download(str(data.get("url", "")))
+                        elif route.endswith("/delete"):
+                            server.hooks.ads.delete(str(data.get("name", "")))
+                        else:
+                            server.hooks.ads.cancel_download()
+                    except ValueError as e:
+                        return self._fail(400, str(e))
+                    self._json(200, server.hooks.ads.state())
                 elif route in ("/api/static/preset", "/api/static/use", "/api/static/delete", "/api/static/lengths"):
                     if not self._authed():
                         return
@@ -649,7 +672,7 @@ class WebServer:
                 try:
                     length = int(self.headers.get("Content-Length") or 0)
                     offset, total = int(q.get("offset", "0")), int(q.get("total", "0"))
-                    result = server.manager.receive(q.get("channel", ""), q.get("name", ""), offset, total, self.rfile, length)
+                    result = self._uploads(q).receive(q.get("channel", ""), q.get("name", ""), offset, total, self.rfile, length)
                 except ValueError:
                     return self._fail(400, "Bad request.")
                 except UploadError as e:
@@ -662,7 +685,8 @@ class WebServer:
                     adv = [a.as_dict() for a in advice.advise(advice.probe(path))]
                     result["advice"] = adv
                     try:
-                        server.hooks.uploaded({"channel": result["channel"], "file": result["file"], "path": path, "advice": adv})
+                        if self._uploads(q) is server.manager:                  # (an ad isn't a video in the library: nothing to scan)
+                            server.hooks.uploaded({"channel": result["channel"], "file": result["file"], "path": path, "advice": adv})
                     except Exception:
                         log.exception("upload hook failed")
                 self._json(200, result)

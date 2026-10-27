@@ -4,14 +4,14 @@ The TV static: which clip plays between videos, and how to choose your own.
 Playback never changes: mpv plays one clip, as a normal file, before every video (and when you change channel). What changes is
 *which file* that is:
 
-  built-in   "TV static with sound" (the default), "TV static, silent", and "No static" (a quick blank clip)
+  built-in   "TV static with sound" (the default), "TV static, silent", (either can be turned off, between videos and on a channel change, with the lengths below)
   your own   a clip uploaded from the phone page, or picked from the TV's home folder (never ~/videos)
 
 A clip's sound is settled at the moment you choose it: keep its own, or (with ffmpeg, which YouTube support installs) give it the TV
 static sound, make it silent, or give it a sound file you uploaded. The TV makes one new file from it, once, and plays that.
 
 A choice is a small dict kept in settings.json:
-    {"kind": "preset", "name": "sound" | "silent" | "none"}
+    {"kind": "preset", "name": "sound" | "silent"}
     {"kind": "upload", "dir": "clip", "name": "x.mp4"}           a file in <data>/static/clip/
     {"kind": "home",   "path": "/home/me/clips/x.mp4"}           a file already on the TV, in the user's home folder
 """
@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 CLIP_EXTS = (".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm", ".gif")
 SOUND_EXTS = (".mp3", ".wav", ".ogg", ".opus", ".m4a", ".aac", ".flac")
-PRESETS = {"sound": "TV static with sound", "silent": "TV static, silent", "none": "No static (a quick blank between videos)"}
+PRESETS = {"sound": "TV static with sound", "silent": "TV static, silent"}
 SOUNDS = ("own", "static", "silent", "file")
 MAX_UPLOAD = {"clip": 50 * 1024 * 1024, "sound": 20 * 1024 * 1024}
 CAP_SECONDS = 5                     # a clip made by the TV is cut to this length: it plays before every single video
@@ -41,9 +41,11 @@ SKIP_DIRS = {"tubeless", "node_modules", "site-packages", "__pycache__", "snap"}
 DEFAULT = {"kind": "preset", "name": "sound"}
 # How long your own clip plays: briefly between videos, longer when you change channel (the built-in static has a short and a
 # long clip for this, as the original project did). One clip serves both: the TV plays its first part, or repeats it if it is shorter.
-BETWEEN_OPTIONS = (0.6, 1.0, 2.0, 3.0)
-CHANGE_OPTIONS = (2.0, 3.0, 4.0, 5.0)
+# 0 turns that static off: between videos the next one then follows at once (a clean cut), and on a channel change the new channel just starts.
+BETWEEN_OPTIONS = (0.0, 0.6, 1.0, 2.0, 3.0)
+CHANGE_OPTIONS = (0.0, 2.0, 3.0, 4.0, 5.0)
 DEFAULT_BETWEEN, DEFAULT_CHANGE = 0.6, 3.0
+BUILTIN_CLIP_SECONDS = 3.1          # the built-in long clip is a little longer than this, so asking for more repeats it
 
 
 def exts(kind: str) -> tuple:
@@ -166,6 +168,10 @@ class StaticManager:
         self.on_change = on_change
         self.ffmpeg = ffmpeg if ffmpeg is not None else shutil.which("ffmpeg")
         self.home = Path(home) if home else Path.home()
+        raw = self.settings.get("static_choice")
+        if isinstance(raw, dict) and raw.get("kind") == "preset" and raw.get("name") == "none":
+            # the old "No static" choice (a quick blank): now it is the default static with none between videos
+            self.settings.set(static_choice=dict(DEFAULT), static_between=0.0)
 
     # --- where things are ------------------------------------------------------------------------
     @property
@@ -193,12 +199,19 @@ class StaticManager:
             return None
         return p if p.is_file() else None
 
-    def _preset_paths(self, name) -> Tuple[str, str]:
+    def _builtin_files(self, name) -> Tuple[str, str]:
+        """(short clip, long clip) of a built-in static."""
         if name == "silent":
             return str(ASSETS_DIR / "static_short_silent.mp4"), str(ASSETS_DIR / "static_long_silent.mp4")
-        if name == "none":
-            return (str(ASSETS_DIR / "static_blank.mp4"),) * 2
         return self.cfg.short_static, self.cfg.long_static
+
+    def _preset_paths(self, name) -> Tuple[str, str]:
+        """The built-in clips as they play: the files themselves at the default lengths, otherwise the start of the long clip for as
+        long as is chosen (repeated if need be)."""
+        short, long_ = self._builtin_files(name)
+        between, change = self.lengths()
+        return (short if between in (0.0, DEFAULT_BETWEEN) else edl_entry(long_, between, BUILTIN_CLIP_SECONDS),
+                long_ if change in (0.0, DEFAULT_CHANGE) else edl_entry(long_, change, BUILTIN_CLIP_SECONDS))
 
     def paths(self) -> Tuple[str, str]:
         """(what plays before each video, what plays when you change channel): file names for the built-in clips, and for your
@@ -213,19 +226,32 @@ class StaticManager:
         clip = self.settings.get("static_seconds")
         clip = float(clip) if isinstance(clip, (int, float)) and clip > 0 else None
         between, change = self.lengths()
-        return edl_entry(str(p), between, clip), edl_entry(str(p), change, clip)
+        return edl_entry(str(p), between or DEFAULT_BETWEEN, clip), edl_entry(str(p), change or DEFAULT_CHANGE, clip)
 
     def lengths(self) -> Tuple[float, float]:
-        """(seconds of your own clip between videos, seconds when you change channel)."""
+        """(seconds of static between videos, seconds when you change channel); 0 is off."""
         between, change = self.settings.get("static_between"), self.settings.get("static_change")
         return (between if between in BETWEEN_OPTIONS else DEFAULT_BETWEEN, change if change in CHANGE_OPTIONS else DEFAULT_CHANGE)
 
+    def between_on(self) -> bool:
+        """Is there static between videos? Off puts none there: videos follow each other (a clean cut)."""
+        return self.lengths()[0] > 0
+
+    def change_on(self) -> bool:
+        """Is there static when you change channel? Off: the new channel just starts."""
+        return self.lengths()[1] > 0
+
+    def gap(self) -> float:
+        """Seconds between one video and the next that are not video: the static's length, or none without static."""
+        return self.lengths()[0]
+
     def delay(self, normal: float) -> float:
-        """How long the channel-change static holds the screen before the new channel loads."""
+        """How long the channel-change static holds the screen before the new channel loads (0 with it off)."""
+        change = self.lengths()[1]
         spec = self._spec()
         if spec["kind"] == "preset":
-            return 0.3 if spec.get("name") == "none" else normal
-        return self.lengths()[1] if self._resolve(spec) else normal
+            return normal if change == DEFAULT_CHANGE else change
+        return change if self._resolve(spec) else normal
 
     def set_lengths(self, between=None, change=None) -> None:
         if between is not None:
@@ -262,13 +288,13 @@ class StaticManager:
         return {"choice": choice, "presets": [{"name": k, "label": v} for k, v in PRESETS.items()],
                 "ffmpeg": bool(self.ffmpeg), "uploads": listing,
                 "lengths": {"between": between, "change": change, "between_options": list(BETWEEN_OPTIONS),
-                            "change_options": list(CHANGE_OPTIONS), "applies": choice["kind"] != "preset"}}
+                            "change_options": list(CHANGE_OPTIONS), "applies": True}}
 
     def current_file(self) -> Path:
         """The actual file of the chosen clip (for the page's preview), not the playlist entry made from it."""
         spec = self._spec()
         p = self._resolve(spec) if spec["kind"] != "preset" else None
-        return p if p else Path(self._preset_paths(spec.get("name"))[1])
+        return p if p else Path(self._builtin_files(spec.get("name"))[1])
 
     def home_files(self, kind: str) -> List[dict]:
         return list_home(self.home, self.root, kind)

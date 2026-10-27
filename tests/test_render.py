@@ -155,3 +155,33 @@ def test_long_names_in_the_header_are_shrunk_then_cut_and_never_run_under_the_bu
     short = render.render_menu_landscape(MenuModel().items(CTX), 0, HW, title="Den", subtitle="Cartoons")
     longer = render.render_menu_landscape(MenuModel().items(CTX), 0, HW, title="Living Room TV", subtitle="The Documentaries Channel")
     assert short.tobytes() != longer.tobytes()
+
+
+def test_the_guide_page_lists_every_channel_with_its_number_and_what_is_on():
+    ctx = MenuContext(channels=CTX.channels, current_channel=1, guide=[f"Next: episode {i}  ·  {i} min left" for i in range(8)])
+    m = MenuModel()
+    m.open_page("guide")
+    items = m.items(ctx)
+    assert [i.number for i in items] == list(range(1, 9)) and [i.label for i in items] == CTX.channels
+    assert all(i.action == ("channel", n) for n, i in enumerate(items)) and items[1].current and not items[0].current
+    assert items[3].detail == "Next: episode 3  ·  3 min left"
+    assert [i.detail for i in m.items(MenuContext(channels=["a"]))] == [""]                    # a guide not filled in yet is blank, not a crash
+    img = render.render_menu_landscape(items, 1, HW, title="Simpsons", subtitle="Cartoons", lit=("guide",))
+    assert img.size == (HW.view_w, HW.view_h) and img.getbbox() is not None
+
+
+def test_a_long_guide_line_is_cut_short_rather_than_run_under_the_dot():
+    m = MenuModel()
+    m.open_page("guide")
+    short = render.render_menu_landscape(m.items(MenuContext(channels=["a"], guide=["Next: x"])), 5, HW)
+    long_ = render.render_menu_landscape(m.items(MenuContext(channels=["a"], guide=["Next: " + "very long title " * 12])), 5, HW)
+    x0, x1 = (int(HW.bezel_center[0] + (render.ROW_X1 - d - 320) * HW.bezel_scale) for d in (40, 30))     # the strip just left of the dot
+    y0, y1 = (int(HW.bezel_center[1] + (render.ROWS_Y0 + d - 240) * HW.bezel_scale) for d in (30, 46))     # where the detail line runs
+    assert short.crop((x0, y0, x1, y1)).tobytes() == long_.crop((x0, y0, x1, y1)).tobytes()
+    assert short.tobytes() != long_.tobytes()                                                             # but the long one did draw something
+
+
+def test_time_left_is_said_in_minutes():
+    from tubeless.menu import time_left
+    assert time_left(None) == "" and time_left(0) == "" and time_left(-5) == ""
+    assert time_left(30) == "under a minute left" and time_left(60) == "1 min left" and time_left(12 * 60 + 20) == "12 min left"

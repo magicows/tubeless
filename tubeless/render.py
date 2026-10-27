@@ -24,9 +24,9 @@ ROWS_Y0 = 78
 PANEL_RECT = (22, 12, 640 - 22, 480 - 12)         # in the unscaled drawing space
 ROW_X0, ROW_X1 = 36, 640 - 50
 OUTSIDE = -1                  # hit_test(): the touch landed outside the menu panel
-BUTTON_SIZE, BUTTON_GAP, BUTTON_Y0 = 42, 10, 20      # the two icon buttons at the top right of the menu panel
+BUTTON_SIZE, BUTTON_GAP, BUTTON_Y0 = 42, 10, 20      # the icon buttons at the top right of the menu panel
 BUTTON_X1 = PANEL_RECT[2] - 24
-HEADER_BUTTONS = ("upload", "power")                 # left to right
+HEADER_BUTTONS = ("guide", "upload", "power")        # left to right
 
 # The colours come from the active theme (themes.py); the boot screen keeps its own.
 
@@ -144,6 +144,10 @@ def _icon(img, d, kind, cx, cy, color):
         for r in (5, 9, 13):
             d.arc((_s(cx - r), _s(cy + 8 - r), _s(cx + r), _s(cy + 8 + r)), 230, 310, fill=color, width=_s(2.5))
         d.ellipse((_s(cx - 2), _s(cy + 6), _s(cx + 2), _s(cy + 10)), fill=color)
+    elif kind == "guide":
+        for y in (-8, 0, 8):
+            R(-12, y - 2, -8, y + 2)
+            L([(-4, y), (12, y)], 3)
     elif kind == "reshuffle":
         d.arc((_s(cx - 9), _s(cy - 9), _s(cx + 9), _s(cy + 9)), 40, 330, fill=color, width=_s(3))
         P((6, -12), (13, -4), (3, -3))
@@ -209,11 +213,11 @@ def hit_test(vx: float, vy: float, top: int, total: int, hw: Hardware) -> Option
 def render_menu_landscape(items: Sequence, selected: int, hw: Hardware, title: str = "Tubeless",
                           subtitle: str = "", top: Optional[int] = None,
                           footer: str = "TAP  choose        SWIPE  scroll        HOLD  close",
-                          armed: Sequence[str] = ()) -> Image.Image:
+                          armed: Sequence[str] = (), lit: Sequence[str] = ()) -> Image.Image:
     """
-    items: objects with .icon .label and optional .value / .current.
-    armed: names of header buttons waiting for their second tap (drawn filled).
-    The TV name, a small gap, then the channel name sit at the left; the two icon buttons at the right.
+    items: objects with .icon .label and optional .value / .current / .number (drawn in place of the icon) / .detail (a small line under the label).
+    armed: names of header buttons waiting for their second tap (drawn filled); lit: ones that are switched on (drawn the same way).
+    The TV name, a small gap, then the channel name sit at the left; the icon buttons at the right.
     Colours and shapes come from the active theme.
     """
     t = themes.active()
@@ -250,7 +254,7 @@ def render_menu_landscape(items: Sequence, selected: int, hw: Hardware, title: s
     btn_w = 3 if t.brutal else 2
     for name in HEADER_BUTTONS:
         x0, y0, x1, y1 = button_rect(name)
-        on = name in armed
+        on = name in armed or name in lit
         _rrect(d, (_s(x0), _s(y0), _s(x1), _s(y1)), _s(0 if t.brutal else 10), accent if on else panel, outline=ink, width=_s(btn_w))
         _icon(img, d, name, (x0 + x1) / 2, (y0 + y1) / 2, on_accent if on else (ink if t.brutal else title_col))
     rule = ink if t.brutal else _rgba(t.line)
@@ -264,6 +268,7 @@ def render_menu_landscape(items: Sequence, selected: int, hw: Hardware, title: s
         end = min(total, start + VISIBLE_ROWS)
     label_font = fonts.load(fonts.SANS_BOLD, 24 * SS)
     value_font = fonts.load(fonts.SANS_BOLD, 22 * SS)
+    detail_font = fonts.load(fonts.SANS, 15 * SS)
     y = ROWS_Y0
     for i in range(start, end):
         item = items[i]
@@ -274,8 +279,17 @@ def render_menu_landscape(items: Sequence, selected: int, hw: Hardware, title: s
         elif sel:
             _rrect(d, (_s(x0), _s(y), _s(x1), _s(y + ROW_H)), _s(t.radius), accent)
         fg = on_accent if sel else text
-        _icon(img, d, getattr(item, "icon", "tv"), x0 + 32, y + ROW_H / 2, fg)
-        d.text((_s(x0 + 62), _s(y + ROW_H / 2)), item.label, font=label_font, fill=fg, anchor="lm")
+        number, detail = getattr(item, "number", None), getattr(item, "detail", "")
+        if number is None:
+            _icon(img, d, getattr(item, "icon", "tv"), x0 + 32, y + ROW_H / 2, fg)
+        else:
+            d.text((_s(x0 + 32), _s(y + ROW_H / 2)), str(number), font=label_font, fill=(on_accent if sel else title_col), anchor="mm")
+        if detail:                                                 # two lines: the name, and under it what is on
+            d.text((_s(x0 + 62), _s(y + 17)), fit_text(d, item.label, label_font, _s(x1 - x0 - 62 - 44)), font=label_font, fill=fg, anchor="lm")
+            d.text((_s(x0 + 62), _s(y + 38)), fit_text(d, detail, detail_font, _s(x1 - x0 - 62 - 44)), font=detail_font,
+                   fill=(on_accent if sel else dim), anchor="lm")
+        else:
+            d.text((_s(x0 + 62), _s(y + ROW_H / 2)), item.label, font=label_font, fill=fg, anchor="lm")
         value = getattr(item, "value", None)
         if value:
             d.text((_s(x1 - 18), _s(y + ROW_H / 2)), str(value), font=value_font,

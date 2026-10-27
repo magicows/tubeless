@@ -53,7 +53,9 @@ Everything that touches the real world sits behind a small interface, so the sam
 ## Playback model
 
 * A channel's playlist is `static, video, static, video, ...`: every video has a static in front of it, so skipping always lands on a static
-  and the channel-flick effect plays in every direction. Skip targets are in `skip.py`; `Playlists.episode_at` relies on the alternation.
+  and the channel-flick effect plays in every direction. With the static between videos off (its length set to Off on the page) it is `video, video, ...`,
+  and an ad (if due) is the only entry between two videos. So nothing may assume odd positions are videos: `Playlists.layout` (written with the
+  playlist) says what each position holds, and `Playlists.episode_at`, `next_video_pos` and `skip.layout_target` all read it.
 * A "video" is a file, a YouTube address (`yt-<id>`, played through mpv's yt-dlp hook) or a Jellyfin stream (`jf-<id>`, an http address the
   server transcodes to H.264). `Library.is_stream` covers the last two; only YouTube gets look-ahead.
 * The shuffled order is saved per channel (`channels/*.json`); progress (episode + seconds) is saved separately (`progress.json`, small, written

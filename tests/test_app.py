@@ -671,3 +671,66 @@ def test_the_channel_numbers_are_remembered_across_a_restart(tmp_path):
     finally:
         r.stop()
     assert [c.name for c in Rig(tmp_path, start=False).app.channels()] == ["2.nights", "1.cartoons"]
+
+
+def test_the_header_guide_button_toggles_the_guide_and_remembers_it(rig):
+    rig.open_menu()
+    assert rig.app.menu.page == "main"
+    rig.tap(*_header_xy("guide"))
+    assert wait_for(lambda: rig.app.menu.page == "guide")
+    assert rig.app.settings.get("menu_guide") is True and rig.app.menu_open
+    rig.app.close_menu()
+    rig.open_menu()
+    assert rig.app.menu.page == "guide"                                                      # the menu opens where it was left
+    rig.tap(*_header_xy("guide"))
+    assert wait_for(lambda: rig.app.menu.page == "main")
+    assert rig.app.settings.get("menu_guide") is False
+    rig.app.close_menu()
+    rig.open_menu()
+    assert rig.app.menu.page == "main"
+
+
+def test_tapping_a_row_in_the_guide_tunes_to_that_channel(rig):
+    rig.open_menu()
+    rig.tap(*_header_xy("guide"))
+    assert wait_for(lambda: rig.app.menu.page == "guide")
+    rig.tap_row(1)                                                                           # no scrolling: rows 0 and 1 are channels 1 and 2
+    assert wait_for(lambda: rig.state["channel"] == "2.nights" and not rig.app.menu_open)
+
+
+def test_the_guide_opens_with_the_current_channel_in_view_and_a_remembered_choice_survives_a_restart(tmp_path):
+    from rig import Rig
+    r = Rig(tmp_path, channels={f"{n}.ch{n}": ["a.mp4"] for n in range(1, 10)}, settings={"menu_guide": True})
+    try:
+        r.app.channel_index = 8
+        r.open_menu()
+        assert r.app.menu.page == "guide" and r.app.menu.index == 8
+        assert r.app.menu.top <= 8 < r.app.menu.top + 6
+    finally:
+        r.stop()
+
+
+def test_the_guide_says_what_is_next_on_each_channel_and_what_is_on_air_in_live_tv_mode(rig):
+    app = rig.app
+    cartoons, nights = app.channels()
+    assert app._now_on(cartoons) == "5 videos"                                                 # nothing watched yet: just a count
+    app.playlists.set_progress(cartoons, "c2.mp4", 400.0)
+    assert app._now_on(cartoons) == "Next: c2"                                                 # its length is not known yet: no time left
+    for rel in app.library.videos(cartoons):
+        app.index._entries[f"{cartoons.name}/{rel}"] = {"duration": 1000.0}
+    assert app._now_on(cartoons) == "Next: c2  ·  10 min left"                               # 1000 s videos, 400 s in
+    app.playlists.set_progress(nights, "gone.mp4", 10.0)
+    assert app._now_on(nights) == "3 videos"                                                   # progress on a video no longer there
+    app.live_tv = True
+    on_air = app._now_on(cartoons)
+    assert on_air.startswith("On now: c") and "left" in on_air                                 # (which video and how long is left depends on the clock)
+
+
+def test_an_empty_channel_in_the_guide(tmp_path):
+    from rig import Rig
+    r = Rig(tmp_path)
+    try:
+        (tmp_path / "videos" / "3.empty").mkdir()
+        assert r.app._now_on(next(c for c in r.app.channels() if c.name == "3.empty")) == "No videos"
+    finally:
+        r.stop()

@@ -16,7 +16,7 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
 * **Channels are folders.** Put videos in `~/videos/1.cartoons`, `~/videos/2.movies` and so on. Swipe up or down to change channel. The channel numbers are
   yours to change: press the up/down arrows icon on the Channels tab and drag the rows into the order you want (arrow keys work too); the TV's swipe order follows.
 * **Touch controls.** Swipe left or right for the next or previous episode, tap to pause, hold for the menu.
-* **Static between episodes.** A short burst before every video and a longer one when you change channel.
+* **Static between episodes.** A short burst before every video and a longer one when you change channel; either can be turned off or lengthened.
 * **Shuffle that doesn't repeat.** Each channel remembers its shuffled order and works through it. New videos are slotted in
   among the ones you haven't seen.
 * **Resume.** It returns to the right episode and the right place in it, even after you pull the plug.
@@ -30,8 +30,10 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
   [Wi-Fi chip and the slower bus clock](#wi-fi-chip-and-the-slower-bus-clock)). Once a minute it writes a health note to the log (power
   flags, temperature, load, free memory, Wi-Fi signal), so a stutter can be lined up with what the Pi was doing.
 * **Menu:** pause, next and previous, brightness, channels, and under Settings: shuffle, sleep timer, auto-dim,
-  touch calibration, upload, Wi-Fi setup, shut down. Two icon buttons at the top right of the menu go straight to **shut down** and to
-  **upload and settings mode**; each asks for a second tap within a few seconds before it does anything.
+  touch calibration, upload, Wi-Fi setup, shut down. Icon buttons at the top right of the menu go straight to **shut down** and to
+  **upload and settings mode**; each asks for a second tap within a few seconds before it does anything. The third, the **guide**, swaps the
+  menu for a TV guide: every channel with its number, and what is on it now (in Live TV mode) or would play next, with the time left; tap a
+  row to tune to it. Tap the button again to go back; the menu opens on whichever you left it on.
 * **Dimming.** A paused picture dims after a minute untouched. Auto-dim (2, 5 or 10 minutes, or off) dims a playing one. A touch
   wakes the screen and does nothing else.
 * **Live TV mode** (optional, off until you switch it on in Settings on the upload page): channels run on the clock like broadcast TV. Tune
@@ -39,6 +41,12 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
   running order round and round (no reshuffling), so it needs every video's length: the TV reads them while it is in upload mode, and the
   page lists which channels are ready (a channel with a length missing plays as usual). A shuffled channel's running order is fixed;
   **Reshuffle** (in the shuffle icon's menu on each channel's row, or the TV menu's *Reshuffle channel* row) gives it a new one.
+* **Ads between videos** (optional, off until you switch it on in Settings on the upload page): every 1, 2, 3, 4, 5 or 10 videos, one clip
+  from the ads folder (`~/ads`, or `ads_dir` in `config.json`) plays after the static, chosen at random (not the same one twice running). The
+  clips are files on the TV: upload them from the page (choose **Ads** instead of a channel) or paste the link to one YouTube video (up to
+  three minutes; needs yt-dlp). They are never streamed, so an ad can't hold the picture up. Switched on with an empty folder, the page
+  says so and nothing plays. There is no ad when you change channel or swipe to skip. With Live TV mode on the ads are not part of the
+  schedule: they fill the gap between videos, so tuning in is still true to the clock.
 * **Dim at night** (optional, off until you switch it on): full brightness by day, then a fade down to the night level (25% unless you
   choose another) over half an hour from sunset, and back up before sunrise, like a Mac's day and night cycle. The TV has no GPS, so give
   it a place on the upload page: type a latitude and longitude, or press *Use my time zone's city* (the TV's own time zone, good to a quarter
@@ -64,11 +72,12 @@ Only someone who can see the TV can get in. From there you can:
 * get advice on files that may not play well (resolution, codec, bitrate). Nothing is converted for you;
 * rename the TV and change the wake-up message typed out on the boot screen (up to 40 characters; blank for the standard one);
 * change the "technical difficulties" picture shown when the player restarts;
-* choose the **TV static**: the built-in one (with sound, or silent), no static (just a quick blank), or your own clip, uploaded or
+* choose the **TV static**: the built-in one (with sound, or silent), or your own clip, uploaded or
   picked from the TV's home folder (never your videos folder). With ffmpeg (YouTube support installs it) the TV can also change a clip's
   sound once, when you choose it: add the TV static sound, make it silent, or use a sound file you upload. One clip is enough: the TV plays
-  only the first 0.6 seconds of it between videos and the first 3 seconds when you change channel (both adjustable; a clip shorter
-  than that is repeated to fill the time). The built-in static keeps its own short and long clips;
+  only the first 0.6 seconds of it between videos and the first 3 seconds when you change channel (a clip shorter than that is repeated
+  to fill the time). Both lengths are adjustable, for the built-in static too, and each can be **off**: with it off between videos one
+  video cuts straight into the next (an ad, if one is due, is then the only break), and with it off on a channel change the new channel just starts;
 * set a channel to play **in order** or **shuffled** (a YouTube channel's "in order" follows its playlist), or leave it following the TV's Shuffle setting: the shuffle icon on each channel's row;
 * choose a **theme** for the menu, the information screens and the page itself (the original yellow and green, a neobrutalist one, Nord, Dracula, Gruvbox, Solarized light), or paste a palette from a colour-sharing site (hex codes or a coolors.co link) and the TV works out the background, text and accent, keeping the text readable. The boot screen keeps its Matrix rain;
 * set brightness, auto-dim, the sleep timer and shuffle, choose the **YouTube picture quality** (240p, 360p or 480p; 360p is the default and is plenty for this screen), and see the TV's status and recent log;

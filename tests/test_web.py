@@ -477,7 +477,7 @@ def no_mediainfo(monkeypatch):
 
 def test_choosing_uploading_and_using_a_static_clip_over_http(server, no_mediainfo):
     token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
-    assert call(server, "POST", "/api/static/preset", {"name": "none"}, token=token)[1]["choice"]["name"] == "none"
+    assert call(server, "POST", "/api/static/preset", {"name": "silent"}, token=token)[1]["choice"]["name"] == "silent"
     code, body = call(server, "POST", "/api/static/preset", {"name": "loud"}, token=token)[:2]
     assert code == 400 and "built-in" in body["error"]
     code, up = put_raw(server, "/api/static/upload?kind=clip&name=My%20clip.mp4", b"v" * 64, token)
@@ -512,6 +512,8 @@ def test_static_lengths_over_http(server):
     token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
     state = call(server, "POST", "/api/static/lengths", {"between": 1.0, "change": 4.0}, token=token)[1]
     assert state["lengths"]["between"] == 1.0 and state["lengths"]["change"] == 4.0
+    off = call(server, "POST", "/api/static/lengths", {"between": 0, "change": 0}, token=token)[1]
+    assert off["lengths"]["between"] == 0 and off["lengths"]["change"] == 0                  # each can be switched off
     code, body = call(server, "POST", "/api/static/lengths", {"between": 0.2}, token=token)[:2]
     assert code == 400 and "lengths offered" in body["error"]
 

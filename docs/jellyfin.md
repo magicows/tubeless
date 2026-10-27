@@ -42,4 +42,8 @@ Only a token is kept on the TV (`jellyfin.json`, readable by the TV's user only)
 * **Proxies.** A proxy such as Cloudflare refuses Python's default user agent (a 403), so the TV names itself `Tubeless/<version>`. A long stream
   through a free proxy may still be limited; using the server's home-network address avoids that.
 * **Transcoding load is on the server.** A small NAS may struggle; a file that is already small H.264 can be sent as it is.
+* **Buffering?** Press *Test stream* on the video that buffers. It listens to the stream for about 15 seconds and says whether it arrives faster
+  than it plays, and if not, whether the server's transcoding or the connection is the limit (it compares the stream with Jellyfin's own plain
+  speed test). A slow transcode usually means a large, HEVC or 10-bit video on a small server; converting that video once to a smaller 8-bit
+  H.264 MP4 fixes it. Jellyfin's dashboard (Activity, and the FFmpeg log under Logs, where `speed=` below 1.0x means it cannot keep up) shows the same.
 * The code is tested against a pretend server (`tests/jf_fake.py`) and was checked by hand against a Jellyfin 12.4 server.

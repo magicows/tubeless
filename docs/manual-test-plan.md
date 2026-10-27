@@ -18,6 +18,11 @@ ssh <tv> 'tail -f ~/.local/share/tubeless/tubeless.log'
 4. **Swipe up / down**: the longer channel-change static, then the next / previous channel. A channel with no videos in it
    is skipped.
 5. Every video, however you got to it, should have the static in front of it.
+6. Set **Between videos** to Off on the page's TV static card (and leave upload mode): one episode now cuts straight into the next with
+   nothing between, swiping to skip still goes to the next / previous episode, and changing channel still shows its static. With ads on, the ad
+   plays alone between two episodes (no static) and cuts straight into the next episode; with static on, you get episode, static, ad, episode.
+   Set **When you change channel** to Off instead: a swipe up/down starts the new channel at once. Try other lengths for each (they work with
+   the built-in static too, and the default 0.6 and 3 seconds play the original clips).
 
 ## 2. The menu
 
@@ -27,9 +32,12 @@ ssh <tv> 'tail -f ~/.local/share/tubeless/tubeless.log'
 4. **Swipe up/down** on the menu: the list scrolls. A tap never scrolls it.
 5. Tap a **channel** row: the long static, then that channel.
 6. Tap **outside** the menu panel: it closes. Leave it alone: it hides itself after about 5 seconds.
-7. The header: the TV's name, a small gap, then the channel name (long names shrink before they are cut), and two icon buttons at the right.
+7. The header: the TV's name, a small gap, then the channel name (long names shrink before they are cut), and three icon buttons at the right (guide, upload, power).
    Tap the **upload** icon once: it fills in and the footer says to tap again; tap again: upload mode starts. Tap the **power** icon the same way
    (the second tap shuts down: do this one last). Tapping one then the other leaves only the second armed. Wait 4 seconds: the first tap is forgotten.
+8. The guide: tap the **guide** icon (it fills in). Every channel is listed with its number, its name, and a line under it: what would play next
+   and how long is left of it (or, with Live TV mode on, what is on air now); a channel not watched yet says how many videos it has. The channel you
+   are on is marked and in view. Swipe to scroll, tap a row to tune to it. Open the menu again: it opens on the guide. Tap the icon again: the usual menu.
 
 ## 3. Shuffle that doesn't repeat
 
@@ -92,10 +100,15 @@ Open it from Settings > Upload videos (or the menu's upload icon) and enter the 
 4. **Live TV mode** (TV tab): tick it. Channels whose video lengths are known are listed as live; tune to one, switch away for a few minutes,
    and come back: it has moved on. *Reshuffle* (on a channel's play order menu) gives it a new running order.
 5. **yt-dlp** (TV tab): the automatic update checkbox is ticked by default.
+6. **Ads between videos** (TV tab): off by default. Tick it with an empty `~/ads` folder: the page warns that nothing will play. Add a clip
+   (Upload tab, put it in *Ads*; or paste a YouTube link in the ads box): the warning goes. Set *one ad every* 1 video and let a video end: the
+   static runs, then the ad, then the next video, with no stall or glitch (try clips of a different size and codec from the videos). A change
+   of channel and a swipe to skip play no ad. Untick it: no more ads. With Live TV mode on, the ad sits in the gap and the channel runs a
+   little behind until you tune in again.
 
 ## 11. Jellyfin
 
-See [jellyfin.md](jellyfin.md). Sign in on the Channels tab, press *Test stream* on a movie, add two movies to a new channel, play it on the TV.
+See [jellyfin.md](jellyfin.md). Sign in on the Channels tab, press *Test stream* on a movie (about 15 seconds; it says whether the stream keeps up with playing, and if not, whether the server or the connection is slow), add two movies to a new channel, play it on the TV.
 Switch the Wi-Fi off while it plays: the TV says why it can't play and moves on.
 
 ## 12. Starting with no network

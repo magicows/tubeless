@@ -257,6 +257,17 @@
         <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px"><input type="checkbox" id="setLive" style="width:auto;margin-top:3px"> <span>Live TV mode <small>Channels run on the clock like broadcast TV: tune in and you join whatever is "on now", partway through, and the channel carries on while you watch another. Each channel plays the same running order round and round (no reshuffling). Needs every video's length, which the TV reads while it is in upload mode.</small></span></label>
         <div id="liveBox" class="hide" style="margin-top:6px"><p class="sub" id="liveInfo" style="margin:0"></p></div>
         <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="setLookahead" style="width:auto;margin-top:3px"> <span>Faster YouTube changeovers <small>While a streamed video plays, the TV gets the next one ready, so it starts in a few seconds instead of about 12. Uses a little extra memory and processing while you watch.</small></span></label>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="setAds" style="width:auto;margin-top:3px"> <span>Ads between videos <small>Every so many videos, a clip from the TV's ads folder plays after the static. Ads are only ever files on the TV (uploaded here, or downloaded from YouTube), never streamed. Not on a channel change, nor when you swipe to skip. With Live TV mode on they fill the gap between videos and are not part of the schedule.</small></span></label>
+        <div id="adsBox" class="hide" style="margin-top:6px">
+          <label for="setAdsEvery">One ad every</label><select id="setAdsEvery"></select>
+          <p class="sub" id="adsInfo" style="margin:8px 0 0"></p>
+          <p class="msg" id="adsWarn" style="color:var(--bad)"></p>
+          <div id="adsList"></div>
+          <label for="adsUrl" style="margin-top:10px">Add one from YouTube (a link to one video, up to 3 minutes)</label>
+          <div class="row"><input id="adsUrl" type="text" autocomplete="off" placeholder="https://www.youtube.com/watch?v=..." aria-label="YouTube link for an ad"><button id="adsGet" class="ghost">Download</button></div>
+          <p class="msg" id="adsmsg"></p>
+          <small>To add clips from this device, choose <b>Ads</b> on the Upload tab.</small>
+        </div>
         <p class="msg" id="setmsg"></p>
       </section>
       <section class="card">
@@ -267,11 +278,11 @@
       </section>
       <section class="card">
         <h2>TV static</h2>
-        <p class="sub">The clip that plays before every video, and when you change channel.</p>
+        <p class="sub">The static that plays between videos, and when you change channel. Each can be turned off below: with it off between videos, one video cuts straight into the next; with it off on a channel change, the new channel just starts.</p>
         <p class="sub" id="staticNow" style="margin:6px 0"></p>
         <div id="staticPresets"></div>
-        <div id="staticLengths" class="hide" style="margin-top:10px">
-          <p class="sub" style="margin:0 0 6px">Your clip is played for only as long as you choose (repeated if it is shorter), so one clip is enough:</p>
+        <div id="staticLengths" style="margin-top:10px">
+          <p class="sub" style="margin:0 0 6px">The clip is played for only as long as you choose (repeated if it is shorter), so one clip is enough:</p>
           <label for="staticBetween">Between videos</label><select id="staticBetween"></select>
           <label for="staticChange" style="margin-top:8px">When you change channel</label><select id="staticChange"></select>
         </div>
@@ -369,6 +380,7 @@ async function load() {
   const sel = $('channel'), keep = sel.value;
   sel.innerHTML = '';
   for (const c of state.channels) if (c.kind !== 'youtube') sel.add(new Option(c.label + '  (' + c.count + ')', c.name));
+  sel.add(new Option('Ads (played between videos)', '__ads__'));
   sel.add(new Option('New channel...', '__new__'));
   if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
   else if (!state.channels.length) sel.value = '__new__';
@@ -485,11 +497,13 @@ async function jfEpisodes(series) {
   } catch (e) { say($('jfmsg'), e.message, 'bad'); }
 }
 async function jfTest(item) {
-  say($('jfmsg'), 'Asking the server for the start of the stream (this can take a few seconds)...', 'ok');
+  say($('jfmsg'), 'Listening to the stream for about 15 seconds, to see whether it arrives fast enough to play without buffering...', 'ok');
   try {
     const r = await jfPost('test', {id: item.id});
-    if (r.note) say($('jfmsg'), r.note, 'bad'); else
-    say($('jfmsg'), (r.ok ? 'It works: ' : 'The server answered, but it may not be a video: ') + r.bytes + ' bytes of ' + r.content_type + (r.first_byte_seconds != null ? ', first data after ' + r.first_byte_seconds + ' s' : '') + '.', r.ok ? 'ok' : 'bad');
+    const buffering = r.verdict && r.verdict !== 'unknown' ? ' ' + r.advice : '';
+    if (r.note) say($('jfmsg'), r.note + buffering, 'bad'); else
+    say($('jfmsg'), (r.ok ? 'It works: ' : 'The server answered, but it may not be a video: ') + r.bytes + ' bytes of ' + r.content_type + (r.first_byte_seconds != null ? ', first data after ' + r.first_byte_seconds + ' s' : '') + '.' + buffering,
+        r.ok && (!r.verdict || r.verdict === 'fine' || r.verdict === 'unknown') ? 'ok' : 'bad');
   } catch (e) { say($('jfmsg'), e.message, 'bad'); }
 }
 async function jfTargets() {
@@ -587,6 +601,30 @@ function renderSettings() {
     (night.using === 'sun' ? 'Using sunset and sunrise at your location' + (night.sunset ? ' (today: sunrise ' + night.sunrise + ', sunset ' + night.sunset + ')' : '') + '. '
       : (v.night_schedule === 'sun' ? 'No location saved, so using the set times. ' : 'Using the set times. ')) + (night.clock === false ? 'Waiting for the TV to set its clock from the network (it needs Wi-Fi); until then it stays at the daytime brightness.' : (night.night ? 'It is night now.' : 'It is daytime now.'));
   $('setLookahead').checked = st.values.youtube_lookahead !== false;
+  renderAds();
+}
+function renderAds() {
+  const a = state.ads; if (!a) return;
+  $('setAds').checked = a.enabled; $('adsBox').classList.toggle('hide', !a.enabled);
+  const sel = $('setAdsEvery'); if (document.activeElement !== sel) { sel.innerHTML = ''; for (const n of a.options) sel.add(new Option(n === 1 ? 'video' : n + ' videos', n)); sel.value = a.every; }
+  $('adsInfo').textContent = a.clips.length ? a.clips.length + ' ad' + (a.clips.length === 1 ? '' : 's') + ' in ' + a.folder + '.' : 'The ads folder (' + a.folder + ') has no clips in it.';
+  $('adsWarn').textContent = a.warning || '';
+  const list = $('adsList'); list.innerHTML = '';
+  for (const name of a.clips) {
+    const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '4px';
+    const label = document.createElement('span'); label.textContent = name; label.style.flex = '1';
+    const del = document.createElement('button'); del.className = 'ghost'; del.textContent = 'Remove';
+    del.onclick = () => adsCall('/api/ads/delete', {name});
+    row.append(label, del); list.appendChild(row);
+  }
+  const d = a.download;
+  if (d && d.stage === 'error') say($('adsmsg'), d.error, 'bad');
+  else if (d && d.stage === 'done') say($('adsmsg'), 'Added ' + d.file + '.', 'ok');
+  else if (d) { say($('adsmsg'), (d.stage === 'looking' ? 'Looking up the video...' : (d.title || 'The video') + ': ' + Math.round(100 * d.progress) + '%'), 'ok'); setTimeout(() => load().catch(() => {}), 2000); }
+}
+async function adsCall(path, body) {
+  try { await api(path, {method: 'POST', body: JSON.stringify(body)}); } catch (e) { say($('adsmsg'), e.message, 'bad'); }
+  await load();
 }
 async function saveSetting(key, value) {
   try { await api('/api/settings', {method: 'POST', body: JSON.stringify({[key]: value})}); say($('setmsg'), 'Saved.', 'ok'); }
@@ -623,6 +661,9 @@ $('ytdlpAuto').onchange = async () => {
   catch (e) { say($('ytdlpMsg'), e.message, 'bad'); }
 };
 $('setShuffle').onchange = () => saveSetting('shuffle', $('setShuffle').checked);
+$('setAds').onchange = () => saveSetting('ads', $('setAds').checked);
+$('setAdsEvery').onchange = () => saveSetting('ads_every', Number($('setAdsEvery').value));
+$('adsGet').onclick = () => adsCall('/api/ads/youtube', {url: $('adsUrl').value}).then(() => { $('adsUrl').value = ''; });
 $('setLive').onchange = () => saveSetting('live_tv', $('setLive').checked);
 $('setLookahead').onchange = () => saveSetting('youtube_lookahead', $('setLookahead').checked);
 function dur(sec) { const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60); return (d ? d + ' d ' : '') + (h || d ? h + ' h ' : '') + m + ' min'; }
@@ -659,10 +700,10 @@ function renderStatic() {
     r.onchange = async () => { try { await api('/api/static/preset', {method: 'POST', body: JSON.stringify({name: p.name})}); say($('staticMsg'), 'Saved. It plays when the TV goes back to playing.', 'ok'); await load(); } catch (e) { say($('staticMsg'), e.message, 'bad'); } };
     lab.append(r, el('span', '', p.label)); box.append(lab);
   }
-  const L = st.lengths, lenBox = $('staticLengths'); lenBox.classList.toggle('hide', !L.applies);
+  const L = st.lengths;
   for (const [id, key, opts] of [['staticBetween', 'between', L.between_options], ['staticChange', 'change', L.change_options]]) {
     const sel = $(id); if (document.activeElement === sel) continue;
-    sel.innerHTML = ''; for (const o of opts) sel.add(new Option(o + ' second' + (o === 1 ? '' : 's'), o)); sel.value = L[key];
+    sel.innerHTML = ''; for (const o of opts) sel.add(new Option(o === 0 ? 'Off' : o + ' second' + (o === 1 ? '' : 's'), o)); sel.value = L[key];
   }
   $('staticFfmpegNote').textContent = st.ffmpeg ? '' : 'Changing a clip\'s sound needs ffmpeg, which this TV does not have (YouTube support installs it). You can still use the clip with its own sound.';
   for (const o of $('staticSound').options) if (o.value !== 'own') o.disabled = !st.ffmpeg;
@@ -841,7 +882,8 @@ $('files').onchange = e => { start([...e.target.files]); e.target.value = ''; };
 let busy = false, queue = [];
 async function start(files) {
   say($('upmsg'), '');
-  let channel = $('channel').value;
+  let channel = $('channel').value, target = '';
+  if (channel === '__ads__') { channel = state.ads.channel; target = 'ads'; }
   if (channel === '__new__') {
     channel = $('newChannel').value.trim();
     if (!channel) return say($('upmsg'), 'Type a name for the new channel first.', 'bad');
@@ -854,14 +896,14 @@ async function start(files) {
     if (!exts.some(x => f.name.toLowerCase().endsWith(x))) { finish(row, 'Not a video type this TV plays (' + exts.join(' ') + ').', 'bad'); continue; }
     if (f.size === 0) { finish(row, 'This file is empty.', 'bad'); continue; }
     if (f.size > state.free_bytes) { finish(row, 'Not enough space: needs ' + hr(f.size) + ', the TV has ' + hr(state.free_bytes) + '.', 'bad'); continue; }
-    queue.push({f, channel, row});
+    queue.push({f, channel, row, target});
   }
   if (!busy) run();
 }
 
 async function run() {
   busy = true;
-  while (queue.length) { const j = queue.shift(); await uploadFile(j.f, j.channel, j.row); }
+  while (queue.length) { const j = queue.shift(); await uploadFile(j.f, j.channel, j.row, j.target); }
   busy = false;
   try { await load(); } catch (e) {}
 }
@@ -886,11 +928,11 @@ function putChunk(url, blob, onProgress) {
   });
 }
 
-async function uploadFile(f, channel, row) {
-  const base = '/api/upload?channel=' + enc(channel) + '&name=' + enc(f.name) + '&total=' + f.size;
+async function uploadFile(f, channel, row, target) {
+  const base = '/api/upload?channel=' + enc(channel) + (target ? '&target=' + target : '') + '&name=' + enc(f.name) + '&total=' + f.size;
   const bar = row.querySelector('.bar > i'), pct = row.querySelector('.pct'), meta = row.querySelector('.meta');
   let offset = 0, retries = 0, t0 = Date.now(), startOffset = 0;
-  try { offset = (await api('/api/upload/status?channel=' + enc(channel) + '&name=' + enc(f.name))).received || 0; } catch (e) { if (e.status === 401) return; }
+  try { offset = (await api('/api/upload/status?channel=' + enc(channel) + (target ? '&target=' + target : '') + '&name=' + enc(f.name))).received || 0; } catch (e) { if (e.status === 401) return; }
   startOffset = offset;
   while (offset < f.size) {
     const end = Math.min(offset + CHUNK, f.size);
@@ -908,7 +950,7 @@ async function uploadFile(f, channel, row) {
       if (e.status && e.status < 500 && e.status !== 0 && e.status !== 400) { finish(row, e.message, 'bad'); pct.textContent = 'Stopped'; return; }
       if (++retries > 6) { finish(row, 'Gave up: ' + e.message + '. Choose the file again to resume.', 'bad'); pct.textContent = 'Stopped'; return; }
       meta.textContent = 'Connection problem, retrying (' + retries + ')...'; await new Promise(r => setTimeout(r, 1500 * retries));
-      try { offset = (await api('/api/upload/status?channel=' + enc(channel) + '&name=' + enc(f.name))).received || 0; } catch (e2) {}
+      try { offset = (await api('/api/upload/status?channel=' + enc(channel) + (target ? '&target=' + target : '') + '&name=' + enc(f.name))).received || 0; } catch (e2) {}
     }
   }
 }

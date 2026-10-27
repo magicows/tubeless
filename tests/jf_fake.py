@@ -2,6 +2,7 @@
 and (like it always has for streams) the token as api_key in the address."""
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -14,6 +15,8 @@ class FakeJellyfin:
     def __init__(self, password="hunter2", quick=True, stream_ok=True, version="12.4.0"):
         self.password, self.quick, self.stream_ok, self.version = password, quick, stream_ok, version
         self.fail_params = set()                        # a stream request carrying any of these query parameters fails with a 500
+        self.stream_bps = None                          # bytes per second the stream is sent at (a transcode that cannot keep up); None = at once
+        self.net_bps = None                             # likewise for the plain bitrate test; "off" = the server has no such endpoint
         self.token = "tok-" + "1" * 28
         self.secret, self.code, self.approved = "sec" + "2" * 29, "123456", False
         self.requests = []                              # (method, path, query, authorization header)
@@ -42,6 +45,22 @@ class FakeJellyfin:
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+
+            def _paced(self, size, bps, ctype):
+                """Send `size` bytes at `bps` bytes a second (a reader that goes away early is fine)."""
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(size))
+                self.end_headers()
+                try:
+                    sent = 0
+                    while sent < size:
+                        n = min(max(1, int(bps / 20)), size - sent)
+                        self.wfile.write(b"x" * n)
+                        sent += n
+                        time.sleep(n / bps)
+                except OSError:
+                    pass
 
             def _authed(self, q):
                 auth = self.headers.get("Authorization", "")
@@ -82,7 +101,18 @@ class FakeJellyfin:
                         return self._send(401)
                     if not fake.stream_ok or any(k in q for k in fake.fail_params):
                         return self._send(500)
+                    if fake.stream_bps:
+                        return self._paced(4_000_000, fake.stream_bps, "video/mp4")
                     return self._send(200, raw=b"\x00\x00\x00\x18ftypmp42" + b"x" * 40000, ctype="video/mp4")
+                if p == "/Playback/BitrateTest":
+                    if not self._authed(q):
+                        return self._send(401)
+                    if fake.net_bps == "off":
+                        return self._send(404)
+                    size = int(q.get("size", ["100000"])[0])
+                    if fake.net_bps:
+                        return self._paced(size, fake.net_bps, "application/octet-stream")
+                    return self._send(200, raw=b"x" * size, ctype="application/octet-stream")
                 if not self._authed(q):
                     return self._send(401)
                 if p == "/UserViews":

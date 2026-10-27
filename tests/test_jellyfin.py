@@ -165,3 +165,58 @@ def test_when_the_servers_transcoder_fails_it_tries_gentler_requests_and_says_wh
     jf.fail_params = set()
     assert "note" not in c.check_stream(MOVIE, seconds=2)              # no failure: no note
     assert c.stream_url(MOVIE, 360, variant=2).startswith(jf.url + f"/Videos/{MOVIE}/stream.mkv?") and "requireAvc" not in c.stream_url(MOVIE, 360, variant=1)
+
+
+# ---- why a stream might buffer -------------------------------------------------------------------------------------------------
+WANTED = 996_000                                                       # what a 360 line stream needs: 900 kbit/s of picture and 96 of sound
+
+
+def test_diagnosis_from_the_numbers():
+    d = jellyfin.diagnose
+    assert d(2_000_000, 1.0, WANTED, "plenty", None)["verdict"] == "fine"
+    fine = d(500_000, 3.0, WANTED, "time", 8e6)                          # 1.33 Mbit/s for a 1 Mbit/s stream
+    assert fine["verdict"] == "fine" and fine["realtime"] == 1.34 and fine["kbps"] == 1333 and fine["wanted_kbps"] == 996
+    assert d(400_000, 3.0, WANTED, "time", 8e6)["verdict"] == "marginal"
+    slow = d(200_000, 3.0, WANTED, "time", 8e6)                          # half speed, but the connection is fast: the server's encode
+    assert slow["verdict"] == "server" and slow["realtime"] == 0.54 and "transcoding" in slow["advice"] and "8.0 Mbit/s" in slow["advice"]
+    assert d(200_000, 3.0, WANTED, "time", 1.5e6)["verdict"] == "network" and "Wi-Fi" in d(200_000, 3.0, WANTED, "time", 1.5e6)["advice"]
+    assert d(200_000, 3.0, WANTED, "time", 3e6)["verdict"] == "slow"      # neither clearly
+    unknown = d(200_000, 3.0, WANTED, "time", None)
+    assert unknown["verdict"] == "slow" and "couldn't time the plain connection" in unknown["advice"] and unknown["network_mbps"] is None
+    assert d(40_000, 0.0, WANTED, "eof", None)["verdict"] == "unknown"    # the stream ended at once: nothing to judge by
+    assert d(10_000, 4.0, WANTED, "time", 8e6)["verdict"] == "server"     # a trickle over four seconds is slow, not unknown
+
+
+def test_the_stream_test_says_the_server_is_the_limit_when_the_stream_is_slow_but_the_connection_is_not(jf):
+    c = client(jf, token=jf.token, user_id=USER)
+    jf.stream_bps = 60_000                                               # about half what the picture needs
+    got = c.check_stream(MOVIE, seconds=2)
+    assert got["ok"] and got["verdict"] == "server" and got["realtime"] < 0.8 and got["network_mbps"] > 4
+    assert any(path == "/Playback/BitrateTest" for _, path, _, _ in jf.requests)
+
+
+def test_the_stream_test_says_it_keeps_up_when_the_server_is_quick(jf):
+    c = client(jf, token=jf.token, user_id=USER)
+    jf.stream_bps = 600_000
+    got = c.check_stream(MOVIE, seconds=2)
+    assert got["verdict"] == "fine" and got["realtime"] > 1.3 and "should not buffer" in got["advice"]
+
+
+def test_the_stream_test_still_works_when_the_server_has_no_bitrate_test(jf):
+    c = client(jf, token=jf.token, user_id=USER)
+    jf.net_bps, jf.stream_bps = "off", 60_000
+    got = c.check_stream(MOVIE, seconds=2)
+    assert got["ok"] and got["network_mbps"] is None and got["verdict"] == "slow" and "couldn't time" in got["advice"]
+
+
+def test_a_slow_connection_is_blamed_when_the_plain_test_is_slow_too(jf, monkeypatch):
+    c = client(jf, token=jf.token, user_id=USER)
+    jf.stream_bps = 60_000
+    monkeypatch.setattr(c, "_network_bps", lambda: 8e5)
+    got = c.check_stream(MOVIE, seconds=2)
+    assert got["verdict"] == "network" and got["network_mbps"] == 0.8
+
+
+def test_a_stream_that_is_over_at_once_is_not_judged(jf):
+    got = client(jf, token=jf.token, user_id=USER).check_stream(MOVIE, seconds=2)       # the pretend server sends 40 KB and stops
+    assert got["ok"] and got["verdict"] == "unknown" and got["bytes"] > 1000
