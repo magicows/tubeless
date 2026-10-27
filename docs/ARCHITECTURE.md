@@ -69,6 +69,9 @@ Everything that touches the real world sits behind a small interface, so the sam
 * **Look-ahead (YouTube streams):** mpv's hook only runs yt-dlp when an entry starts (6 to 12 s on the Pi), so while a video plays a
   background thread resolves the next one's real addresses and swaps them into the playlist (`loadfile ... insert-at`, mpv 0.38+), with
   checks that the swap landed where it should and a fall-back that rebuilds the playlist if not.
+* The Wi-Fi guard keeps a cached `App._offline` flag (checking the network runs commands, so never from the touch handler). While it is set,
+  `Library.has_videos` counts only downloaded videos (so swiping and the menu skip stream-only channels) and `Playlists.entries` leaves streamed
+  videos out of a mixed channel's playlist (the plan itself is untouched, so its place is kept for when the network is back).
 * Streams wait for the network after a start (`_wait_for_network`), and a video that doesn't begin is given up on (45 s) and the player
   restarted past it (120 s), with a message on screen saying why.
 

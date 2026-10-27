@@ -110,12 +110,15 @@ Open it from Settings > Upload videos (or the menu's upload icon) and enter the 
 ## 11. Jellyfin
 
 See [jellyfin.md](jellyfin.md). Sign in on the Channels tab, press *Test stream* on a movie (about 15 seconds; it says whether the stream keeps up with playing, and if not, whether the server or the connection is slow), add two movies to a new channel, play it on the TV.
-Switch the Wi-Fi off while it plays: the TV says why it can't play and moves on.
+Switch the Wi-Fi off while it plays: the TV says why it can't play and moves on. Within about 20 seconds the Jellyfin channel (and any YouTube
+channel with nothing downloaded) is left out: swipe past it, and the menu marks it "No Wi-Fi" (the guide says "Needs Wi-Fi"). A channel with some
+downloaded videos plays only those. Switch the Wi-Fi back on: they return.
 
 ## 12. Starting with no network
 
 Power-cycle with the router off, on a channel that streams: the TV shows "Waiting for Wi-Fi", then starts anyway after about a minute with the
-usual "couldn't play" card. With the router on, it waits only until the Wi-Fi is up.
+usual "couldn't play" card, unless another channel has downloaded videos: it then starts on that one instead. With the router on, it
+waits only until the Wi-Fi is up.
 
 ## What to tell us
 

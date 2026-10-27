@@ -69,6 +69,8 @@ class App:
         self.store = store or Store(cfg.data)
         self.settings = Settings(self.store, expand(cfg.legacy_state_file))
         self.library = library or Library(cfg.videos)
+        self._offline = False                  # is the network down? (kept by the Wi-Fi guard; the library then counts only downloaded videos)
+        self.library.offline = lambda: self._offline
         self.playlists = Playlists(self.library, self.store, cfg.short_static, rng=rng)
         self.statics = StaticManager(cfg, self.settings, self.library.root, on_change=self._static_changed)
         self.playlists.static_path = self.statics.paths()[0]
@@ -342,12 +344,31 @@ class App:
         if not self._net_waited:
             self._net_waited = True
             self._wait_for_network(plan)
+            self._refresh_offline()
+        if self._offline and not self.library.has_videos(plan.channel):
+            other = self.library.next_playable(self.channel_index, +1)         # still no network: a channel with downloaded videos instead
+            if other is not None:
+                self.channel_index = other
+                self.settings.set(channel=self.channels()[other].name)
+                log.warning("no network, and %s only streams; starting on %s instead", plan.channel.name, self.channels()[other].name)
+                plan = self.playlists.plan(self.current_channel(), self.shuffle_for(self.current_channel()))
+                self.plan = plan
         path = self.playlists.write_m3u(plan, self.m3u_path)
         self.player.start(path)
         self._set_resume(plan)
 
     def _network_ready(self) -> bool:
         return self.online() and self.wifi.reachable() is not False
+
+    def _set_offline(self, offline: bool) -> None:
+        if offline != self._offline:
+            log.info("the network is down: channels that only stream are left out until it is back" if offline
+                     else "the network is up: streamed channels are back")
+        self._offline = offline
+
+    def _refresh_offline(self) -> None:
+        """Ask the network now (it runs commands, so not from the touch handler); the Wi-Fi guard does this every so often."""
+        self._set_offline(self.wifi_available and not self._network_ready())
 
     def _wait_for_network(self, plan: Plan) -> None:
         """Just after the TV starts its Wi-Fi is still joining. A channel that streams from YouTube would run through its videos
@@ -682,8 +703,14 @@ class App:
         rels = self.library.videos(channel)
         if not rels:
             return "No videos"
+        partial = False
+        if self._offline:                                          # what would play without the network: the downloaded videos
+            local = [r for r in rels if not self.library.is_stream(r)]
+            if not local:
+                return "Needs Wi-Fi"
+            partial, rels = len(local) < len(rels), local
         streams = self.library.stream_seconds(channel) if any(self.library.is_stream(r) for r in rels) else {}
-        found = self._live_channel(channel, rels) if self.is_live(channel) else None
+        found = self._live_channel(channel, rels) if self.is_live(channel) and not partial else None     # (a schedule with videos left out is not the schedule)
         if found is not None:
             order, durations = found
             rel, seconds_in = live.slot(order, durations, time.time(), self.statics.gap())
@@ -701,7 +728,8 @@ class App:
     def _menu_ctx(self) -> MenuContext:
         channels = self.channels()
         shuffling = self.shuffle_for(channels[self.channel_index]) if 0 <= self.channel_index < len(channels) else self.shuffle
-        return MenuContext(guide=[self._now_on(c) for c in channels] if self.menu.page == "guide" else (),
+        offline = [not self.library.has_videos(c) for c in channels] if self._offline else ()      # channels that only stream, with the network down
+        return MenuContext(guide=[self._now_on(c) for c in channels] if self.menu.page == "guide" else (), needs_wifi=offline,
 
             paused=bool(self.player.get("pause")), brightness=self.current_brightness(), shuffle=shuffling,
             channels=[c.label for c in channels], current_channel=self.channel_index,
@@ -1458,6 +1486,7 @@ class App:
         ip = self.wifi.connected_ip()
         reach = self.wifi.reachable() if ip is not None else None
         now = time.time()
+        self._set_offline(ip is None or reach is False)
         if ip is not None and reach is not False:                # reach None = can't tell: assume fine
             if self._net_down_since is not None:
                 log.info("the network is back")
@@ -1765,6 +1794,8 @@ class App:
         """What is on air on this channel now: (running order, video, seconds in), or None (the channel is not Live, or a length unknown)."""
         if not self.is_live(channel):
             return None
+        if self._offline and any(self.library.is_stream(r) for r in self.library.videos(channel)):
+            return None                                           # the network is down and the schedule includes streamed videos: play what is downloaded
         found = self._live_channel(channel)
         if found is None:
             return None

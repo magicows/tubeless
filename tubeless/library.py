@@ -55,6 +55,7 @@ class Library:
         self.root = expand(root)
         self.jf_url: Optional[Callable[[str], str]] = None     # set by the app: a Jellyfin item's id -> the address to stream it from
         self.order: List[str] = []         # channel numbers chosen on the web page: these first, in this order; the rest by folder name after them
+        self.offline: Callable[[], bool] = lambda: False       # set by the app: is the network down? (then only downloaded videos count)
 
     def channels(self) -> List[Channel]:
         try:
@@ -106,11 +107,12 @@ class Library:
         return sorted(rels, key=lambda r: (position.get(r, 10 ** 9), r))
 
     def has_videos(self, channel: Channel) -> bool:
+        """Is there something to play? With the network down (see `offline`) only downloaded videos count: a channel of streamed ones is not."""
         for _, dirnames, files in os.walk(channel.path):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
             if any(f.lower().endswith(VIDEO_EXTS) and not f.startswith(".") for f in files):
                 return True
-        return bool(self._streamed(channel, []))
+        return not self.offline() and bool(self._streamed(channel, []))
 
     def abspath(self, channel: Channel, rel: str) -> str:
         """Where to play a video from: its file, or the address for a streamed one (YouTube, or your Jellyfin server)."""
@@ -306,8 +308,15 @@ class Playlists:
         layout: List[Optional[int]] = []
         self.ad_positions = set()
         base = self.static_path if self.static_on else None
+        # With the network down the streamed videos are left out, if the channel has downloaded ones to play instead. (A channel that is all
+        # streamed keeps them: there is nothing else, and the TV says why each one can't play.)
+        leave_out = self.library.offline() and any(not self.library.is_stream(r) for r in plan.rotated)
+        n = 0
         for i, rel in enumerate(plan.rotated):
-            entry = self.static_slot(base, i) if self.static_slot is not None else base
+            if leave_out and self.library.is_stream(rel):
+                continue
+            entry = self.static_slot(base, n) if self.static_slot is not None else base
+            n += 1
             if entry is not None:
                 if entry != base:
                     self.ad_positions.add(len(out))

@@ -116,7 +116,7 @@ def test_skipping_away_while_it_loads_is_not_reported_as_a_failure(tmp_path):
 
 def test_with_no_wifi_the_message_says_so(tmp_path):
     stream_channel(tmp_path / "videos")
-    r = Rig(tmp_path, channels={"1.local": ["a.mp4"]}, wifi=FakeWifi(ip=None, saved=True), setup_auto=False,
+    r = Rig(tmp_path, channels={"9.empty": []}, wifi=FakeWifi(ip=None, saved=True), setup_auto=False,           # (no other channel to play instead)
             player_args=dict(url_delay=0.4, url_fail=(A,)), settings={"channel": "3.youtube", "shuffle": False})
     try:
         r.player.command("set_property", "playlist-pos", 1)

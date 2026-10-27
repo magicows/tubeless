@@ -49,6 +49,10 @@ Things that went wrong while building Tubeless on fresh Raspberry Pi OS cards, a
   chip locking up. See the README's "Wi-Fi chip and the slower bus clock" for the clock setting and for what Tubeless does about it by itself.
 * **A saved Wi-Fi takes up to half a minute to connect after boot.** Upload mode waits for it; a streaming channel waits up to a minute
   before it starts ("Waiting for Wi-Fi").
+* **With no Wi-Fi, channels that only stream are left out.** A YouTube channel set to stream, or a Jellyfin channel, has nothing the TV can play
+  without the network, so a swipe steps over it, the menu marks it "No Wi-Fi", and the guide says "Needs Wi-Fi". A channel with some downloaded
+  videos plays just those until the network is back (the guard checks every 20 seconds). If the TV starts with no network on a channel that
+  only streams, it starts on one with downloaded videos instead. If there is no other channel, it plays as before: each video says it needs Wi-Fi.
 
 ## Reading the log
 

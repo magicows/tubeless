@@ -40,6 +40,7 @@ class MenuContext:
     confirm_transfer: bool = False            # the header's upload button has had its first tap
     wifi_setup: bool = False                  # offered only where the OS can do it (NetworkManager)
     guide: Sequence[str] = ()                 # what is on each channel, as the guide shows it (same order as `channels`)
+    needs_wifi: Sequence[bool] = ()           # channels that can't play now (they only stream and the network is down), same order as `channels`
 
 
 def _minutes(m: int) -> str:
@@ -85,7 +86,8 @@ class MenuModel:
             Item("gear", "Settings", ("page", "settings")),
         ]
         for i, label in enumerate(ctx.channels):
-            rows.append(Item("tv", label, ("channel", i), current=(i == ctx.current_channel)))
+            off = i < len(ctx.needs_wifi) and ctx.needs_wifi[i]
+            rows.append(Item("tv", label, ("channel", i), value="No Wi-Fi" if off else None, current=(i == ctx.current_channel)))
         return rows
 
 
