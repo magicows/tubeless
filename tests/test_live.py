@@ -62,19 +62,53 @@ def known(r, channel_names, seconds=100.0):
                 r.app.index._entries[f"{c.name}/{rel}"] = {"duration": seconds}
 
 
-def test_it_is_off_by_default_and_a_setting(tmp_path):
+def test_no_channel_is_live_by_default_and_each_can_be_turned_on_and_off(tmp_path):
     r = make(tmp_path)
     try:
-        assert r.app.live_tv is False and r.app.web_settings()["values"]["live_tv"] is False and r.app.web_settings()["live"] is None
+        app = r.app
+        assert app.live_channels == set() and app.web_settings()["live"] is None and "live_tv" not in app.web_settings()["values"]
+        assert [c["live"] for c in app.web_state()["channels"]] == [False, False]
         for bad in ("yes", 1, None):
             with pytest.raises(ValueError):
-                r.app.set_web_setting("live_tv", bad)
-        r.app.set_web_setting("live_tv", True)
-        assert r.app.live_tv is True and r.app.web_settings()["live"] is not None
-        assert wait_for(lambda: r.app.settings.get("live_tv") is True)
+                app.set_channel_live("1.cartoons", bad)
+        with pytest.raises(ValueError):
+            app.set_channel_live("9.none", True)
+        app.set_channel_live("1.cartoons", True)
+        assert app.is_live(app.channels()[0]) and not app.is_live(app.channels()[1])
+        assert [c["live"] for c in app.web_state()["channels"]] == [True, False] and app.web_settings()["live"] is not None
+        assert wait_for(lambda: app.settings.get("live_channels") == ["1.cartoons"])
     finally:
         r.stop()
-    assert make(tmp_path, start=False).app.live_tv is True                           # kept across a restart
+    again = make(tmp_path, start=False).app
+    assert again.live_channels == {"1.cartoons"}                                       # kept across a restart
+    again.set_channel_live("1.cartoons", False)
+    assert again.live_channels == set() and again.settings.get("live_channels") == []
+
+
+def test_a_tv_with_the_old_all_channels_switch_on_keeps_every_channel_live(tmp_path):
+    r = make(tmp_path, settings={"live_tv": True})
+    try:
+        assert r.app.live_channels == {"1.cartoons", "2.nights"} and r.app.settings.get("live_channels") == ["1.cartoons", "2.nights"]
+    finally:
+        r.stop()
+    assert make(tmp_path / "off", settings={"live_tv": False}, start=False).app.live_channels == set()
+
+
+def test_only_a_live_channel_runs_on_the_clock_the_others_resume_as_usual(tmp_path):
+    r = make(tmp_path)
+    try:
+        app = r.app
+        known(r, ["1.cartoons", "2.nights"])                                           # both could be scheduled
+        cartoons, nights = app.channels()
+        app.set_channel_live("1.cartoons", True)
+        assert app._live_slot(cartoons) is not None and app._live_slot(nights) is None
+        assert app._now_on(cartoons).startswith("On now: ") and app._now_on(nights) == "3 videos"
+        app.playlists.set_progress(nights, "n1.mp4", 40.0)
+        assert app._now_on(nights).startswith("Next: n1")                              # it picks up where you left off
+        with pytest.raises(ValueError):
+            app.reshuffle_live("2.nights")                                             # nothing to reshuffle on a channel that is not live
+    finally:
+        r.stop()
 
 
 def test_tuning_in_joins_what_is_on_air_and_off_means_the_old_ways(tmp_path):
@@ -85,7 +119,7 @@ def test_tuning_in_joins_what_is_on_air_and_off_means_the_old_ways(tmp_path):
         channel = app.channels()[0]
         before = app.playlists.plan(channel, True)
         assert app._live_slot(channel) is None                                         # off: nothing is scheduled
-        app.live_tv = True
+        app.live_channels.update(c.name for c in app.channels())
         order, rel, pos = app._live_slot(channel)
         assert sorted(order) == sorted(app.library.videos(channel)) and rel in order and 0 <= pos <= 100
         plan = app.playlists.plan(channel, True)
@@ -109,7 +143,7 @@ def test_the_channel_keeps_running_while_you_are_away(tmp_path, monkeypatch):
     try:
         app = r.app
         known(r, ["1.cartoons"])
-        app.live_tv = True
+        app.live_channels.update(c.name for c in app.channels())
         channel = app.channels()[0]
         clock = {"now": 1_000_000.0}
         monkeypatch.setattr(time, "time", lambda: clock["now"])
@@ -130,7 +164,7 @@ def test_a_finished_loop_returns_to_what_is_on_air_instead_of_reshuffling(tmp_pa
     try:
         app = r.app
         known(r, ["1.cartoons"])
-        app.live_tv = True
+        app.live_channels.update(c.name for c in app.channels())
         channel = app.channels()[0]
         plan = app.playlists.new_cycle(channel, True)
         assert plan.order == app._live_slot(channel)[0]
@@ -144,7 +178,7 @@ def test_streamed_videos_use_the_lengths_their_playlist_gave(tmp_path):
     r = Rig(tmp_path, channels={"1.cartoons": ["x.mp4"]})
     try:
         app = r.app
-        app.live_tv = True
+        app.live_channels.update(c.name for c in app.channels())
         channel = [c for c in app.channels() if c.name == "3.youtube"][0]
         found = app._live_channel(channel)
         assert found is not None and sorted(found[1]) == [100.0, 100.0, 100.0]
@@ -158,7 +192,7 @@ def test_starting_a_channel_seeks_to_the_position_that_is_on_air(tmp_path, monke
     try:
         app = r.app
         known(r, ["1.cartoons"])
-        app.live_tv = True
+        app.live_channels.update(c.name for c in app.channels())
         channel = app.channels()[0]
         total = live.total_seconds([100.0] * 4, app.statics.lengths()[0])
         monkeypatch.setattr(time, "time", lambda: 1_000_000.0 - (1_000_000.0 % total) + 150.0)       # 150 s into the loop: 49 s into the second video
@@ -190,8 +224,8 @@ def test_reshuffling_changes_the_running_order_keeps_it_across_restarts_and_refu
         known(r, ["1.cartoons"])
         channel = app.channels()[0]
         with pytest.raises(ValueError):
-            app.reshuffle_live("1.cartoons")                                       # Live TV mode is off
-        app.live_tv = True
+            app.reshuffle_live("1.cartoons")                                       # the channel is not live
+        app.live_channels.update(c.name for c in app.channels())
         before = app._live_slot(channel)[0]
         app.reshuffle_live("1.cartoons")
         after = app._live_slot(channel)[0]
@@ -214,7 +248,7 @@ def test_in_live_mode_the_orders_are_per_channel_settings_and_in_order_means_fil
     try:
         app = r.app
         known(r, ["1.cartoons"])
-        app.live_tv = True
+        app.live_channels.update(c.name for c in app.channels())
         channel = app.channels()[0]
         app.set_channel_order("1.cartoons", "order")
         assert app._live_slot(channel)[0] == sorted(app.library.videos(channel))   # by file name

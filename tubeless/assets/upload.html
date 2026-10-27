@@ -254,10 +254,11 @@
         <label for="setSleep" style="margin-top:10px">Sleep timer (stops the TV after)</label><select id="setSleep"></select>
         <label for="setYtq" style="margin-top:10px">YouTube picture quality (streaming and downloads)</label><select id="setYtq"></select>
         <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="setShuffle" style="width:auto"> Shuffle episodes</label>
-        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px"><input type="checkbox" id="setLive" style="width:auto;margin-top:3px"> <span>Live TV mode <small>Channels run on the clock like broadcast TV: tune in and you join whatever is "on now", partway through, and the channel carries on while you watch another. Each channel plays the same running order round and round (no reshuffling). Needs every video's length, which the TV reads while it is in upload mode.</small></span></label>
-        <div id="liveBox" class="hide" style="margin-top:6px"><p class="sub" id="liveInfo" style="margin:0"></p></div>
+        <p style="margin:12px 0 0;font-weight:600">Live channels</p>
+        <p class="sub" style="margin:2px 0 0">A channel can run on the clock like broadcast TV: tune in and you join whatever is "on now", partway through, and the channel carries on while you watch another. It plays the same running order round and round (no reshuffling) and needs every video's length, which the TV reads while it is in upload mode. Other channels shuffle or play in order and pick up where you left off. Turn it on for a channel from the order icon on the Channels tab.</p>
+        <p class="sub" id="liveInfo" style="margin:6px 0 0"></p>
         <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="setLookahead" style="width:auto;margin-top:3px"> <span>Faster YouTube changeovers <small>While a streamed video plays, the TV gets the next one ready, so it starts in a few seconds instead of about 12. Uses a little extra memory and processing while you watch.</small></span></label>
-        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="setAds" style="width:auto;margin-top:3px"> <span>Ads between videos <small>Every so many videos, a clip from the TV's ads folder plays after the static. Ads are only ever files on the TV (uploaded here, or downloaded from YouTube), never streamed. Not on a channel change, nor when you swipe to skip. With Live TV mode on they fill the gap between videos and are not part of the schedule.</small></span></label>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="setAds" style="width:auto;margin-top:3px"> <span>Ads between videos <small>Every so many videos, a clip from the TV's ads folder plays after the static. Ads are only ever files on the TV (uploaded here, or downloaded from YouTube), never streamed. Not on a channel change, nor when you swipe to skip. On a live channel they fill the gap between videos and are not part of the schedule.</small></span></label>
         <div id="adsBox" class="hide" style="margin-top:6px">
           <label for="setAdsEvery">One ad every</label><select id="setAdsEvery"></select>
           <p class="sub" id="adsInfo" style="margin:8px 0 0"></p>
@@ -583,12 +584,12 @@ function renderSettings() {
   $('setShuffle').checked = !!st.values.shuffle;
   $('ytdlpAuto').checked = st.values.ytdlp_auto !== false;
   const v = st.values, night = st.night || {};
-  $('setLive').checked = !!v.live_tv; $('liveBox').classList.toggle('hide', !v.live_tv);
-  if (v.live_tv && st.live) {
-    const ready = st.live.channels.filter(c => c.ready), not = st.live.channels.filter(c => !c.ready);
-    $('liveInfo').textContent = (ready.length ? 'Live now: ' + ready.map(c => c.label + ' (a ' + c.minutes + ' min loop)').join(', ') + '. ' : 'No channel is ready yet. ') +
+  const liveChans = st.live ? st.live.channels.filter(c => c.live) : [];
+  if (liveChans.length) {
+    const ready = liveChans.filter(c => c.ready), not = liveChans.filter(c => !c.ready);
+    $('liveInfo').textContent = (ready.length ? 'Live now: ' + ready.map(c => c.label + ' (a ' + c.minutes + ' min loop)').join(', ') + '. ' : 'No live channel is ready yet. ') +
       (not.length ? 'Playing as usual until their lengths are known: ' + not.map(c => c.label + (c.missing ? ' (' + c.missing + ' video' + (c.missing === 1 ? '' : 's') + ' not read yet)' : '')).join(', ') + '.' : '');
-  }
+  } else $('liveInfo').textContent = 'No channel is live.';
   $('setNight').checked = !!v.night_mode; $('nightBox').classList.toggle('hide', !v.night_mode);
   fillSelect('setNightLevel', 'night_brightness', st.options.night_brightness, v.night_brightness);
   fillSelect('setNightMode', 'night_schedule', st.options.night_schedule, v.night_schedule);
@@ -664,7 +665,6 @@ $('setShuffle').onchange = () => saveSetting('shuffle', $('setShuffle').checked)
 $('setAds').onchange = () => saveSetting('ads', $('setAds').checked);
 $('setAdsEvery').onchange = () => saveSetting('ads_every', Number($('setAdsEvery').value));
 $('adsGet').onclick = () => adsCall('/api/ads/youtube', {url: $('adsUrl').value}).then(() => { $('adsUrl').value = ''; });
-$('setLive').onchange = () => saveSetting('live_tv', $('setLive').checked);
 $('setLookahead').onchange = () => saveSetting('youtube_lookahead', $('setLookahead').checked);
 function dur(sec) { const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60); return (d ? d + ' d ' : '') + (h || d ? h + ' h ' : '') + m + ' min'; }
 async function loadStatus() {
@@ -990,7 +990,7 @@ document.addEventListener('click', closePop);
 function orderMenu(row, c) {
   closePop();
   const pop = document.createElement('div'); pop.className = 'pop'; pop.onclick = e => e.stopPropagation();
-  const cur = c.order || 'default', liveOn = !!(state.settings && state.settings.values.live_tv);
+  const cur = c.order || 'default';
   const choose = async v => {
     closePop();
     try { await api('/api/channel/order', {method: 'POST', body: JSON.stringify({channel: c.name, order: v})}); say($('chanmsg'), c.label + ': saved. It applies when the TV goes back to playing.', 'ok'); await load(); }
@@ -999,8 +999,15 @@ function orderMenu(row, c) {
   for (const [v, t] of [['shuffle', 'Shuffled'], ['order', 'In order'], ['default', "Follow the TV's Shuffle setting"]]) {
     const b = document.createElement('button'); b.textContent = t; b.className = cur === v ? 'on' : ''; b.onclick = () => choose(v); pop.append(b);
   }
-  if (liveOn) {
-    pop.append(document.createElement('hr'));
+  pop.append(document.createElement('hr'));
+  const live = document.createElement('button'); live.textContent = c.live ? 'Live: runs on the clock (tap to turn off)' : 'Make this channel live (runs on the clock)'; live.className = c.live ? 'on' : '';
+  live.onclick = async () => {
+    closePop();
+    try { await api('/api/channel/live', {method: 'POST', body: JSON.stringify({channel: c.name, live: !c.live})}); say($('chanmsg'), c.label + (c.live ? ' is not live any more' : ' is live') + '. It applies when the TV goes back to playing.', 'ok'); await load(); }
+    catch (e) { say($('chanmsg'), e.message, 'bad'); }
+  };
+  pop.append(live);
+  if (c.live) {
     const r = document.createElement('button'); r.textContent = 'Reshuffle (new live running order)'; r.disabled = cur === 'order';
     r.onclick = async () => {
       closePop();

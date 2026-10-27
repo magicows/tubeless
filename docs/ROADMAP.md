@@ -46,10 +46,6 @@ mode, dimming, the installer and updater. This file is only what is **still to d
 * Remote servers behind a proxy: the TV names itself so Cloudflare lets it through, but a long stream through a free proxy may still be limited;
   the fix is to use the server's home-network address. Worth a note in the README once it has been lived with.
 
-### Live TV mode follow-ups
-
-* A per-channel switch (it is one global switch today), and the TV guide as its "now on" listing (it already is, for the channels that can be scheduled).
-
 ### Themes follow-ups
 
 * A theme's own boot greeting, menu title and static clips; the boot screen's Matrix rain following the theme (on request); sharing a theme as a file.

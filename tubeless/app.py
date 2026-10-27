@@ -91,7 +91,14 @@ class App:
         if hasattr(player, "youtube_height"):
             player.youtube_height = self.youtube_height
         customs = self.settings.get("custom_themes", [])
-        self.live_tv = bool(self.settings.get("live_tv", False))          # Live TV mode: opt in (see live.py)
+        listed_live = self.settings.get("live_channels")                  # channels that run on the clock like broadcast TV (see live.py); opt in, one by one
+        if isinstance(listed_live, list):
+            self.live_channels: set = {n for n in listed_live if isinstance(n, str)}
+        elif self.settings.get("live_tv") is True:                        # the old all-channels switch: every channel it had is Live, as it was
+            self.live_channels = {c.name for c in self.library.channels()}
+            self.settings.set(live_channels=sorted(self.live_channels))
+        else:
+            self.live_channels = set()
         self.playlists.live = self._live_slot
         self.guide_view = bool(self.settings.get("menu_guide", False))    # the menu opens on the TV guide (the header's guide button toggles it)
         listed = self.settings.get("channel_list", [])
@@ -671,12 +678,12 @@ class App:
         self.render_menu()
 
     def _now_on(self, channel) -> str:
-        """The guide's line for a channel: what is on it now (Live TV mode) or would play next, and how long is left of it."""
+        """The guide's line for a channel: what is on it now (a live channel) or would play next, and how long is left of it."""
         rels = self.library.videos(channel)
         if not rels:
             return "No videos"
         streams = self.library.stream_seconds(channel) if any(self.library.is_stream(r) for r in rels) else {}
-        found = self._live_channel(channel, rels) if self.live_tv else None
+        found = self._live_channel(channel, rels) if self.is_live(channel) else None
         if found is not None:
             order, durations = found
             rel, seconds_in = live.slot(order, durations, time.time(), self.statics.gap())
@@ -753,7 +760,7 @@ class App:
             self.render_menu()
         elif kind == "reshuffle":
             if self.shuffle_for(self.current_channel()):
-                if self.live_tv and self._live_channel(self.current_channel()) is not None:
+                if self.is_live(self.current_channel()) and self._live_channel(self.current_channel()) is not None:
                     self.reshuffle_live(self.current_channel().name)          # a new running order; what is on air in it plays now
                 self.finish_cycle_in_place()
             self.schedule_menu_hide()
@@ -1740,9 +1747,23 @@ class App:
         durations = [self._seconds_of(channel, r, streams) for r in order]
         return (order, durations) if all(d and d > 0 for d in durations) else None
 
+    def is_live(self, channel) -> bool:
+        """Does this channel run on the clock (Live)? Set per channel on the web page."""
+        return getattr(channel, "name", channel) in self.live_channels
+
+    def set_channel_live(self, channel: str, live) -> None:
+        """Make a channel Live (it runs on the clock, see live.py) or not, from the web page."""
+        if channel not in [c.name for c in self.library.channels()]:
+            raise ValueError("No such channel.")
+        if not isinstance(live, bool):
+            raise ValueError("A channel is live or not.")
+        (self.live_channels.add if live else self.live_channels.discard)(channel)
+        self.settings.set(live_channels=sorted(self.live_channels))
+        log.info("channel %s is %s", channel, "live" if live else "not live")
+
     def _live_slot(self, channel) -> Optional[tuple]:
-        """What is on air on this channel now: (running order, video, seconds in), or None (Live TV mode off, or a length unknown)."""
-        if not self.live_tv:
+        """What is on air on this channel now: (running order, video, seconds in), or None (the channel is not Live, or a length unknown)."""
+        if not self.is_live(channel):
             return None
         found = self._live_channel(channel)
         if found is None:
@@ -1752,12 +1773,12 @@ class App:
         return (order, on_air[0], on_air[1]) if on_air else None
 
     def reshuffle_live(self, channel_name: str) -> None:
-        """A new running order for a channel in Live TV mode (it plays round and round, so it never reshuffles by itself)."""
+        """A new running order for a Live channel (it plays round and round, so it never reshuffles by itself)."""
         channel = next((c for c in self.library.channels() if c.name == channel_name), None)
         if channel is None:
             raise ValueError("No such channel.")
-        if not self.live_tv:
-            raise ValueError("Live TV mode is off.")
+        if not self.is_live(channel):
+            raise ValueError("That channel is not live.")
         if not self.shuffle_for(channel):
             raise ValueError("That channel plays in order, so there is nothing to reshuffle. Set it to shuffle first.")
         rels = self.library.videos(channel)
@@ -1772,14 +1793,14 @@ class App:
         log.info("Live TV running order of %s reshuffled", channel.name)
 
     def live_status(self) -> dict:
-        """For the page: which channels Live TV mode can schedule, and for the others how many lengths are missing."""
+        """For the page: the Live channels, which of them can be scheduled, and for the others how many lengths are missing."""
         channels = []
         for c in self.library.channels():
             rels = self.library.videos(c)
             streams = self.library.stream_seconds(c) if any(self.library.is_stream(r) for r in rels) else {}
             missing = sum(1 for r in rels if not (self._seconds_of(c, r, streams) or 0) > 0)
             found = None if missing or not rels else self._live_channel(c, rels)
-            channels.append({"name": c.name, "label": c.label, "ready": found is not None, "missing": missing,
+            channels.append({"name": c.name, "label": c.label, "live": self.is_live(c), "ready": found is not None, "missing": missing,
                              "minutes": live.minutes(live.total_seconds(found[1], self.statics.gap())) if found else None})
         return {"channels": channels}
 
@@ -1968,7 +1989,7 @@ class App:
         channels = []
         for c in self.library.channels():
             entry = {"name": c.name, "label": c.label, "count": len(self.library.videos(c)),
-                     "library": self.index.summary(c), "order": self.channel_order.get(c.name)}
+                     "library": self.index.summary(c), "order": self.channel_order.get(c.name), "live": self.is_live(c)}
             if JellyfinChannelFile.exists(Path(c.path)):
                 entry["kind"] = "jellyfin"
                 entry["jellyfin"] = JellyfinChannelFile.load(Path(c.path)).as_dict()
@@ -1985,11 +2006,11 @@ class App:
         return {"values": {"brightness": self.brightness, "shuffle": self.shuffle, "auto_dim_min": self.auto_dim_min,
                            "sleep_timer_min": self.sleep_timer_min, "youtube_height": self.youtube_height,
                            "youtube_lookahead": self.lookahead_enabled, "theme": self.theme_id,
-                           "live_tv": self.live_tv, "ads": self.ads.enabled, "ads_every": self.ads.every, "ytdlp_auto": bool(self.settings.get("ytdlp_auto", True)),
+                           "ads": self.ads.enabled, "ads_every": self.ads.every, "ytdlp_auto": bool(self.settings.get("ytdlp_auto", True)),
                            "night_mode": self.night.enabled, "night_brightness": self.night.level, "night_schedule": self.night.mode,
                            "night_location": ("%s, %s" % self.night.location) if self.night.location else "",
                            "night_from": daynight.format_clock(self.night.start), "night_to": daynight.format_clock(self.night.end)},
-                "live": self.live_status() if self.live_tv else None,
+                "live": self.live_status() if self.live_channels else None,
                 "night": dict(self.night.describe(time.time()), clock=self._clock_trusted(time.time())),
                 "options": {"brightness": list(self.hw.brightness_levels), "auto_dim_min": list(AUTO_DIM_STEPS),
                             "sleep_timer_min": list(SLEEP_TIMER_STEPS), "youtube_height": list(HEIGHTS),
@@ -2037,12 +2058,6 @@ class App:
             if not isinstance(value, bool):
                 raise ValueError("That is on or off.")
             self.settings.set(ytdlp_auto=value)
-        elif key == "live_tv":
-            if not isinstance(value, bool):
-                raise ValueError("That is on or off.")
-            self.live_tv = value
-            self.settings.set(live_tv=value)
-            log.info("Live TV mode %s from the web page", "on" if value else "off")
         elif key == "ads":
             self.ads.set_enabled(value)                                       # the playlist built next has them (or not)
         elif key == "ads_every":
@@ -2237,6 +2252,9 @@ class _WebHooks:
 
     def reshuffle_live(self, channel: str) -> None:
         self.app.reshuffle_live(channel)
+
+    def set_channel_live(self, channel: str, live) -> None:
+        self.app.set_channel_live(channel, live)
 
     def timezone_location(self) -> Optional[dict]:
         found = daynight.timezone_location()

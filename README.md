@@ -32,20 +32,21 @@ folder of videos. Swipe to change channel. A burst of static plays between episo
 * **Menu:** pause, next and previous, brightness, channels, and under Settings: shuffle, sleep timer, auto-dim,
   touch calibration, upload, Wi-Fi setup, shut down. Icon buttons at the top right of the menu go straight to **shut down** and to
   **upload and settings mode**; each asks for a second tap within a few seconds before it does anything. The third, the **guide**, swaps the
-  menu for a TV guide: every channel with its number, and what is on it now (in Live TV mode) or would play next, with the time left; tap a
+  menu for a TV guide: every channel with its number, and what is on it now (a live channel) or would play next, with the time left; tap a
   row to tune to it. Tap the button again to go back; the menu opens on whichever you left it on.
 * **Dimming.** A paused picture dims after a minute untouched. Auto-dim (2, 5 or 10 minutes, or off) dims a playing one. A touch
   wakes the screen and does nothing else.
-* **Live TV mode** (optional, off until you switch it on in Settings on the upload page): channels run on the clock like broadcast TV. Tune
-  in and you join whatever is "on now", partway through, and the channel carries on while you watch another. Each channel plays the same
-  running order round and round (no reshuffling), so it needs every video's length: the TV reads them while it is in upload mode, and the
-  page lists which channels are ready (a channel with a length missing plays as usual). A shuffled channel's running order is fixed;
+* **Live channels** (optional, per channel: the order icon's menu on each channel's row on the upload page): a live channel runs on the clock
+  like broadcast TV. Tune in and you join whatever is "on now", partway through, and the channel carries on while you watch another. It plays
+  the same running order round and round (no reshuffling), so it needs every video's length: the TV reads them while it is in upload mode,
+  and the page lists which live channels are ready (one with a length missing plays as usual). Other channels shuffle or play in order and
+  resume where you left off, so a sitcom can be live while a films channel is not. A shuffled channel's running order is fixed;
   **Reshuffle** (in the shuffle icon's menu on each channel's row, or the TV menu's *Reshuffle channel* row) gives it a new one.
 * **Ads between videos** (optional, off until you switch it on in Settings on the upload page): every 1, 2, 3, 4, 5 or 10 videos, one clip
   from the ads folder (`~/ads`, or `ads_dir` in `config.json`) plays after the static, chosen at random (not the same one twice running). The
   clips are files on the TV: upload them from the page (choose **Ads** instead of a channel) or paste the link to one YouTube video (up to
   three minutes; needs yt-dlp). They are never streamed, so an ad can't hold the picture up. Switched on with an empty folder, the page
-  says so and nothing plays. There is no ad when you change channel or swipe to skip. With Live TV mode on the ads are not part of the
+  says so and nothing plays. There is no ad when you change channel or swipe to skip. On a live channel the ads are not part of the
   schedule: they fill the gap between videos, so tuning in is still true to the clock.
 * **Dim at night** (optional, off until you switch it on): full brightness by day, then a fade down to the night level (25% unless you
   choose another) over half an hour from sunset, and back up before sunrise, like a Mac's day and night cycle. The TV has no GPS, so give

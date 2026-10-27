@@ -721,7 +721,7 @@ def test_the_guide_says_what_is_next_on_each_channel_and_what_is_on_air_in_live_
     assert app._now_on(cartoons) == "Next: c2  ·  10 min left"                               # 1000 s videos, 400 s in
     app.playlists.set_progress(nights, "gone.mp4", 10.0)
     assert app._now_on(nights) == "3 videos"                                                   # progress on a video no longer there
-    app.live_tv = True
+    app.live_channels.update(c.name for c in app.channels())
     on_air = app._now_on(cartoons)
     assert on_air.startswith("On now: c") and "left" in on_air                                 # (which video and how long is left depends on the clock)
 

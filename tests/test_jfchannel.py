@@ -156,7 +156,7 @@ def test_live_tv_mode_uses_the_lengths_the_server_gave(stack):
     rig, fake = stack
     app = rig.app
     app.jellyfin("add", {"new": "jm", "ids": [MOVIE, BOXSET]})
-    app.live_tv = True
+    app.live_channels.update(c.name for c in app.channels())
     channel = [c for c in app.channels() if c.name == "jm"][0]
     found = app._live_channel(channel)
     assert found is not None and sorted(found[1]) == [70 * 60.0, 80 * 60.0, 90 * 60.0]

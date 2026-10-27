@@ -9,7 +9,7 @@ slot at all: the playlist is then  video, video, ad, video ...  (see Playlists.l
 codec in one entry cleanly, change it (a third kind of entry in the playlist is the other way).
 
 An ad is never in the first slot of a playlist (that is a channel change, or the TV starting up: the static's job), and a swipe to skip
-doesn't land on one (see App.skip_video). With Live TV mode on the ads aren't part of the schedule; they just sit in the gap
+doesn't land on one (see App.skip_video). On a live channel the ads aren't part of the schedule; they just sit in the gap
 between videos, and the schedule is worked out without them.
 """
 from __future__ import annotations

@@ -36,7 +36,7 @@ ssh <tv> 'tail -f ~/.local/share/tubeless/tubeless.log'
    Tap the **upload** icon once: it fills in and the footer says to tap again; tap again: upload mode starts. Tap the **power** icon the same way
    (the second tap shuts down: do this one last). Tapping one then the other leaves only the second armed. Wait 4 seconds: the first tap is forgotten.
 8. The guide: tap the **guide** icon (it fills in). Every channel is listed with its number, its name, and a line under it: what would play next
-   and how long is left of it (or, with Live TV mode on, what is on air now); a channel not watched yet says how many videos it has. The channel you
+   and how long is left of it (or, on a live channel, what is on air now); a channel not watched yet says how many videos it has. The channel you
    are on is marked and in view. Swipe to scroll, tap a row to tune to it. Open the menu again: it opens on the guide. Tap the icon again: the usual menu.
 
 ## 3. Shuffle that doesn't repeat
@@ -97,13 +97,14 @@ Open it from Settings > Upload videos (or the menu's upload icon) and enter the 
 2. **Themes** (TV tab): choose each one; the page and the TV's menu change. Add a palette from hex codes or a coolors.co link. The boot screen keeps its rain.
 3. **Dim at night** (TV tab): tick it, press *Use my time zone's city*, check today's sunrise and sunset. To see it work, choose *At set times* with a
    night that began a few minutes ago: the screen fades to the night level within about half a minute, and back at the end time.
-4. **Live TV mode** (TV tab): tick it. Channels whose video lengths are known are listed as live; tune to one, switch away for a few minutes,
-   and come back: it has moved on. *Reshuffle* (on a channel's play order menu) gives it a new running order.
+4. **Live channels** (Channels tab): in a channel's order menu choose *Make this channel live*. The TV tab lists it as live once its video lengths
+   are known; tune to it, switch away for a few minutes, and come back: it has moved on. A channel you left alone is not live and still resumes
+   where you left off. *Reshuffle* (on a live channel's order menu) gives it a new running order. Turn it off again from the same menu.
 5. **yt-dlp** (TV tab): the automatic update checkbox is ticked by default.
 6. **Ads between videos** (TV tab): off by default. Tick it with an empty `~/ads` folder: the page warns that nothing will play. Add a clip
    (Upload tab, put it in *Ads*; or paste a YouTube link in the ads box): the warning goes. Set *one ad every* 1 video and let a video end: the
    static runs, then the ad, then the next video, with no stall or glitch (try clips of a different size and codec from the videos). A change
-   of channel and a swipe to skip play no ad. Untick it: no more ads. With Live TV mode on, the ad sits in the gap and the channel runs a
+   of channel and a swipe to skip play no ad. Untick it: no more ads. On a live channel, the ad sits in the gap and the channel runs a
    little behind until you tune in again.
 
 ## 11. Jellyfin

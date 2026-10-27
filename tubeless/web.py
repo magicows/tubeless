@@ -237,8 +237,9 @@ class WebServer:
         set_standby(data: bytes) -> None      raises ValueError("why not")
         reset_standby() -> None               back to the picture that ships with Tubeless
         set_setting(key, value) -> None       raises ValueError("why not")
+        set_channel_live(channel, live)       make a channel Live (runs on the clock) or not; raises ValueError("why not")
         set_channel_list(names)               the channels' numbers: every channel's folder name, first is channel 1; raises ValueError("why not")
-        reshuffle_live(channel)               a new running order in Live TV mode; raises ValueError("why not")
+        reshuffle_live(channel)               a new running order for a live channel; raises ValueError("why not")
         set_channel_order(channel, order)     'shuffle' | 'order' | 'default'; raises ValueError("why not")
         ads                                   an ads.AdsManager (the ads between videos and their folder; raises ValueError("why not"))
         ads_download(url)                     start downloading a YouTube video into the ads folder; raises ValueError("why not")
@@ -551,6 +552,17 @@ class WebServer:
                         return
                     try:
                         server.hooks.set_channel_list(data.get("order"))
+                    except ValueError as e:
+                        return self._fail(400, str(e))
+                    self._json(200, {"ok": True})
+                elif route == "/api/channel/live":
+                    if not self._authed():
+                        return
+                    data = self._body_json()
+                    if data is None:
+                        return
+                    try:
+                        server.hooks.set_channel_live(str(data.get("channel", "")), data.get("live"))
                     except ValueError as e:
                         return self._fail(400, str(e))
                     self._json(200, {"ok": True})

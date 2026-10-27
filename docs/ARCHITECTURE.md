@@ -61,7 +61,7 @@ Everything that touches the real world sits behind a small interface, so the sam
 * The shuffled order is saved per channel (`channels/*.json`); progress (episode + seconds) is saved separately (`progress.json`, small, written
   every 30 s and on pause). mpv is given the order **rotated to start at the current episode**, so a restart resumes there, "previous" from the
   first entry wraps to the one before it, and no `--playlist-start` is needed.
-* **Live TV mode** replaces that for a channel whose lengths are all known: `Playlists.plan()` asks the app for the video on air now and its
+* **A live channel** (set per channel, `live_channels` in the settings) replaces that when its lengths are all known: `Playlists.plan()` asks the app for the video on air now and its
   position (`live.slot`), writes it as the channel's progress, and the normal resume step seeks to it. The running order is fixed (a stable
   shuffle keyed by file name), so a finished loop returns to what is on air rather than reshuffling.
 * Resume is a seek after the episode loads (`App._track`), because mpv applies `--start` to every file in a playlist. A Jellyfin video is
@@ -113,7 +113,7 @@ calibration) draw straight to `/dev/fb0` (RGB565) when no player is running.
 | Path | What |
 |---|---|
 | `~/.config/tubeless/config.json` | name, wake-up message, videos folder, static clips, hardware overrides (all optional) |
-| `~/.local/share/tubeless/settings.json` | brightness, shuffle, channel, channel numbers, play orders, themes, night dimming, Live TV mode, calibration ... |
+| `~/.local/share/tubeless/settings.json` | brightness, shuffle, channel, channel numbers, play orders, themes, night dimming, which channels are live, calibration ... |
 | `~/.local/share/tubeless/jellyfin.json` | the Jellyfin server and sign-in token (readable by the TV's user only; never the password) |
 | `~/.local/share/tubeless/progress.json` | where you are in each channel |
 | `~/.local/share/tubeless/channels/*.json` | each channel's shuffled order |

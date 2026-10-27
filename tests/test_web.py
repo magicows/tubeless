@@ -240,6 +240,13 @@ class Hooks:
             raise ValueError("No such channel.")
         self.order = (channel, order)
 
+    def set_channel_live(self, channel, live):
+        if channel != "1.shows":
+            raise ValueError("No such channel.")
+        if not isinstance(live, bool):
+            raise ValueError("A channel is live or not.")
+        self.live = (channel, live)
+
     def status(self):
         return {"python": "3.13.0", "uptime_s": 5}
 
@@ -448,6 +455,17 @@ def test_channel_play_order_over_http(server):
     assert server.hooks.order == ("1.shows", "shuffle")
     code, body = call(server, "POST", "/api/channel/order", {"channel": "9.nope", "order": "order"}, token=token)[:2]
     assert code == 400 and "No such channel" in body["error"]
+
+
+def test_making_a_channel_live_over_http(server):
+    assert call(server, "POST", "/api/channel/live", {"channel": "1.shows", "live": True})[0] == 401
+    token = call(server, "POST", "/api/login", {"pin": "4321"})[1]["token"]
+    assert call(server, "POST", "/api/channel/live", {"channel": "1.shows", "live": True}, token=token)[0] == 200
+    assert server.hooks.live == ("1.shows", True)
+    code, body = call(server, "POST", "/api/channel/live", {"channel": "9.nope", "live": True}, token=token)[:2]
+    assert code == 400 and "No such channel" in body["error"]
+    code, body = call(server, "POST", "/api/channel/live", {"channel": "1.shows", "live": "yes"}, token=token)[:2]
+    assert code == 400 and "live or not" in body["error"]
 
 
 def put_raw(srv, path, body, token=None):
