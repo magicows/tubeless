@@ -185,3 +185,51 @@ def test_a_failed_jellyfin_video_says_where_the_problem_is(stack, caplog):
     caplog.clear()
     app._stream_failed({"rel": rel})
     assert "Jellyfin isn't connected: sign in on the upload page" in caplog.text
+
+
+# ---- removing a channel --------------------------------------------------------------------------------------------------------
+def test_a_jellyfin_channel_can_be_removed_and_nothing_else_is_touched(stack):
+    rig, fake = stack
+    app = rig.app
+    app.jellyfin("add", {"new": "jm", "ids": [MOVIE, BOXSET]})
+    app.jellyfin("add", {"new": "zz", "ids": [MOVIE]})
+    jm = [c for c in app.channels() if c.name == "jm"][0]
+    app.set_channel_order("jm", "order")
+    app.set_channel_live("jm", True)
+    app.live_seeds["jm"] = 2
+    app.playlists.set_progress(jm, "jf-" + MOVIE, 30.0)
+    app.playlists.plan(jm, False)
+    stays = app.channels()[0].name                                                             # the channel the TV is on: not the one removed
+    before = [c.name for c in app.channels()]
+    assert app.jellyfin("delete", {"channel": "jm"}) == {"removed": "jm"}
+    assert not (rig.cfg.videos / "jm").exists() and (rig.cfg.videos / "zz").is_dir()
+    assert [c.name for c in app.channels()] == [n for n in before if n != "jm"] and app.current_channel().name == stays
+    assert "jm" not in app.channel_order and "jm" not in app.live_channels and "jm" not in app.live_seeds
+    assert wait_for(lambda: "jm" not in (rig.app.settings.get("channel_order") or {}) and "jm" not in (rig.app.settings.get("live_channels") or []))
+    assert "jm" not in app.store.load("progress.json", {}) and not [p for p in (rig.cfg.data / "channels").glob("jm-*.json")]
+    assert not any(fake_call[1].startswith("/Items") and fake_call[0] == "DELETE" for fake_call in fake.requests)      # the server was not asked to delete anything
+
+
+def test_removing_the_channel_the_tv_is_on_moves_it_to_a_valid_one(stack):
+    rig, fake = stack
+    app = rig.app
+    app.jellyfin("add", {"new": "zjm", "ids": [MOVIE]})                                       # sorts last
+    names = [c.name for c in app.channels()]
+    app.channel_index = names.index("zjm")
+    app.jellyfin("delete", {"channel": "zjm"})
+    assert app.channel_index == len(app.channels()) - 1 and app.current_channel().name in [c.name for c in app.channels()]
+    assert app.settings.get("channel") == app.current_channel().name
+
+
+def test_only_a_jellyfin_channel_that_holds_nothing_else_is_removed(stack):
+    rig, fake = stack
+    app = rig.app
+    app.jellyfin("add", {"new": "jm", "ids": [MOVIE]})
+    (rig.cfg.videos / "jm" / "mine.mp4").write_bytes(b"x")
+    with pytest.raises(Exception) as e:
+        app.jellyfin("delete", {"channel": "jm"})
+    assert "mine.mp4" in str(e.value) and (rig.cfg.videos / "jm" / "mine.mp4").is_file() and (rig.cfg.videos / "jm" / "jellyfin-channel.json").is_file()
+    for not_ours in ("1.cartoons", "9.nope", "../x", ""):                                     # a folder of videos, a made-up name, a path
+        with pytest.raises(Exception):
+            app.jellyfin("delete", {"channel": not_ours})
+    assert (rig.cfg.videos / "1.cartoons").is_dir() and len(list((rig.cfg.videos / "1.cartoons").iterdir())) == 5

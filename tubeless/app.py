@@ -28,6 +28,7 @@ from . import health
 from .hardware import Hardware, apply_affine, solve_affine
 from . import jellyfin, live
 from .ads import EVERY_OPTIONS, AdsManager
+from . import jfchannel
 from .jfchannel import JellyfinChannelFile
 from .libindex import LibraryIndex
 from .lookahead import Lookahead
@@ -1877,6 +1878,40 @@ class App:
             raise jellyfin.JellyfinError("That isn't one of your Jellyfin channels.")
         return JellyfinChannelFile.load(folder)
 
+    def _jf_delete(self, name: str) -> dict:
+        """Remove a Jellyfin channel from the TV. It holds only a list of what is on the server, so nothing of yours is deleted (the server
+        is not touched); a folder that also has other files in it is left alone, and the page is told why."""
+        self._jf_channel(name)                                         # it must be one of the Jellyfin channels
+        folder = self._jf_channel_folder(name)
+        extra = sorted(e.name for e in folder.iterdir() if e.name != jfchannel.FILE)
+        if extra:
+            raise jellyfin.JellyfinError("That channel's folder also holds " + ", ".join(extra[:3]) + (" and more" if len(extra) > 3 else "") +
+                                         ", so the TV won't remove it. Take those out first.")
+        channel = next(c for c in self.library.channels() if c.name == name)
+        channels = self.channels()
+        keep = self.current_channel().name if channels else None
+        old_index = self.channel_index
+        (folder / jfchannel.FILE).unlink()
+        folder.rmdir()
+        self.playlists.forget(channel)
+        if self.plan is not None and self.plan.channel.name == name:
+            self.plan = None
+        self.channel_order.pop(name, None)
+        self.live_channels.discard(name)
+        self.live_seeds.pop(name, None)
+        self.library.order = [n for n in self.library.order if n != name]
+        self.settings.set(channel_order=dict(self.channel_order), live_channels=sorted(self.live_channels), live_seeds=dict(self.live_seeds),
+                          channel_list=list(self.library.order))
+        names = [c.name for c in self.channels()]
+        if keep in names:
+            self.channel_index = names.index(keep)                     # the TV stays on the channel it was on, whatever its number now
+        else:
+            self.channel_index = max(0, min(old_index, len(names) - 1))      # it was on this one: the one that took its place
+            if names:
+                self.settings.set(channel=names[self.channel_index])
+        log.info("Jellyfin channel %s removed", name)
+        return {"removed": name}
+
     def _jf_client(self) -> "jellyfin.Client":
         cred = self.jf_credentials
         if not cred.signed_in:
@@ -1931,6 +1966,8 @@ class App:
             return {"removed": gone, "left": len(cf.items)}
         if action == "add":
             return self._jf_add(p)
+        if action == "delete":
+            return self._jf_delete(p.get("channel", ""))
         if action == "disconnect":
             self._jf_quick = None
             self.jf_credentials.forget()

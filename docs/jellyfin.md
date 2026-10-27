@@ -12,8 +12,9 @@ videos, shuffle or in order, resume, sleep timer, Live TV mode) works as for any
    stream* asks the server for the start of a video and says what came back.
 3. Choose *A new channel...* (and name it, for example `jellymovies`) or one of your existing Jellyfin channels, and press **Add**. Nothing
    becomes a channel by itself.
-4. A Jellyfin channel shows in *Your channels* with a Jellyfin badge; tap it to see its videos and remove any. A channel holds only Jellyfin
-   videos (no mixing with YouTube or files, for now).
+4. A Jellyfin channel shows in *Your channels* with a Jellyfin badge; tap it to see its videos and remove any, or press **Remove channel** to take the whole
+   channel off the TV (its play order and place go with it; nothing on your Jellyfin server is touched). A channel holds only Jellyfin videos
+   (no mixing with YouTube or files, for now).
 
 Only a token is kept on the TV (`jellyfin.json`, readable by the TV's user only), never your password. Revoke it any time from Jellyfin's dashboard
 (it appears as a device called *Tubeless TV*), or press *Disconnect* on the page.

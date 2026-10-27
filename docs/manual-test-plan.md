@@ -109,7 +109,7 @@ Open it from Settings > Upload videos (or the menu's upload icon) and enter the 
 
 ## 11. Jellyfin
 
-See [jellyfin.md](jellyfin.md). Sign in on the Channels tab, press *Test stream* on a movie (about 15 seconds; it says whether the stream keeps up with playing, and if not, whether the server or the connection is slow), add two movies to a new channel, play it on the TV.
+See [jellyfin.md](jellyfin.md). Sign in on the Channels tab, press *Test stream* on a movie (about 15 seconds; it says whether the stream keeps up with playing, and if not, whether the server or the connection is slow), add two movies to a new channel, play it on the TV. Open the channel on the Channels tab and press *Remove channel*: after you confirm, it is gone from the list and the TV (and the TV stays on the channel it was on).
 Switch the Wi-Fi off while it plays: the TV says why it can't play and moves on. Within about 20 seconds the Jellyfin channel (and any YouTube
 channel with nothing downloaded) is left out: swipe past it, and the menu marks it "No Wi-Fi" (the guide says "Needs Wi-Fi"). A channel with some
 downloaded videos plays only those. Switch the Wi-Fi back on: they return.

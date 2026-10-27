@@ -228,6 +228,13 @@ class Playlists:
     def progress(self, channel: Channel) -> dict:
         return self.store.load(self.PROGRESS, {}).get(channel.name, {})
 
+    def forget(self, channel: Channel) -> None:
+        """Drop what is saved about a channel that has been removed: its place, and its saved running order."""
+        data = self.store.load(self.PROGRESS, {})
+        if data.pop(channel.name, None) is not None:
+            self.store.save(self.PROGRESS, data)
+        self.store.path(self._file(channel)).unlink(missing_ok=True)
+
     def set_progress(self, channel: Channel, current: str, position: float) -> None:
         data = self.store.load(self.PROGRESS, {})
         data[channel.name] = {"current": current, "pos": round(float(position), 1)}

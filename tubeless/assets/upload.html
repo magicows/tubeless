@@ -186,7 +186,7 @@
         <h2 id="jfchanTitle">Jellyfin channel</h2>
         <p class="sub" id="jfchanSub" style="margin:0 0 6px"></p>
         <div class="listbox" id="jfchanItems"></div>
-        <div class="toolbar"><button class="ghost" id="jfchanClose">Close</button></div>
+        <div class="toolbar"><button class="ghost" id="jfchanClose">Close</button><button class="danger" id="jfchanDelete">Remove channel</button></div>
         <p class="msg" id="jfchanMsg"></p>
       </section>
     </div>
@@ -528,7 +528,9 @@ $('jfAdd').onclick = async () => {
     jfPicked.clear(); $('jfNewName').value = ''; await load(); await jfList();
   } catch (e) { say($('jfmsg'), e.message, 'bad'); }
 };
+let jfOpen = null;
 async function openJfChannel(name, label) {
+  jfOpen = {name, label};
   $('jfchan').classList.remove('hide'); $('jfchanTitle').textContent = label; say($('jfchanMsg'), '');
   const box = $('jfchanItems'); box.innerHTML = '';
   try {
@@ -550,6 +552,11 @@ async function openJfChannel(name, label) {
   } catch (e) { say($('jfchanMsg'), e.message, 'bad'); }
 }
 $('jfchanClose').onclick = () => $('jfchan').classList.add('hide');
+$('jfchanDelete').onclick = async () => {
+  if (!jfOpen || !confirm('Remove the channel "' + jfOpen.label + '" from the TV? Nothing is deleted from your Jellyfin server.')) return;
+  try { await jfPost('delete', {channel: jfOpen.name}); $('jfchan').classList.add('hide'); say($('jfmsg'), jfOpen.label + ' was removed.', 'ok'); jfOpen = null; await load(); await jfList(); }
+  catch (e) { say($('jfchanMsg'), e.message, 'bad'); }
+};
 $('jfLogin').onclick = async () => {
   say($('jfmsg'), 'Signing in...', 'ok');
   try { jfShow(await jfPost('connect', {server: $('jfServer').value, username: $('jfUser').value, password: $('jfPass').value})); $('jfPass').value = ''; say($('jfmsg'), 'Connected.', 'ok'); }
